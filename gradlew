@@ -1,7 +1,7 @@
 #!/bin/sh
 
 APP_BASE_NAME=${0##*/}
-APP_HOME=$(cd "${APP_BASE_NAME%/*}" >/dev/null 2>&1 && pwd -P) || exit
+APP_HOME=$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd -P) || exit
 
 DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 

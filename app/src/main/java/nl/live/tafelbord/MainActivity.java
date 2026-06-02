@@ -15,362 +15,80 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 public class MainActivity extends Activity {
-    private static final String PREFS = "live_tafelbord_de_peperboom";
-    private static final String TABLES_KEY = "tables";
-    private static final String SETTINGS_KEY = "settings";
-    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm", Locale.forLanguageTag("nl-NL"));
-    private static final int GREEN = Color.rgb(31, 139, 83);
-    private static final int RED = Color.rgb(198, 50, 45);
-    private static final int ORANGE = Color.rgb(224, 132, 38);
-    private static final int BLUE = Color.rgb(38, 99, 174);
-    private static final int GREY = Color.rgb(108, 116, 125);
-    private static final int DARK_RED = Color.rgb(122, 25, 26);
-    private static final int DARK_GREEN = Color.rgb(18, 79, 58);
-    private static final int CREAM = Color.rgb(250, 247, 238);
-    private static final int INK = Color.rgb(28, 43, 36);
+    private static final String PREFS="live_tafelbord_de_peperboom", TABLES="tafels", RES="reserveringen", SET="instellingen";
+    private static final DateTimeFormatter TIME=DateTimeFormatter.ofPattern("HH:mm",Locale.forLanguageTag("nl-NL"));
+    private static final int GREEN=Color.rgb(35,139,82), RED=Color.rgb(194,52,48), ORANGE=Color.rgb(221,133,39), BLUE=Color.rgb(37,99,173), GREY=Color.rgb(111,116,124), DARK_RED=Color.rgb(126,27,27), DARK_GREEN=Color.rgb(18,79,58), CREAM=Color.rgb(250,247,238), WARM=Color.rgb(180,126,63), INK=Color.rgb(26,42,34), LINE=Color.rgb(225,216,196);
+    private final ArrayList<Table> tables=new ArrayList<>();
+    private final ArrayList<Booking> bookings=new ArrayList<>();
+    private final LinkedHashSet<String> selected=new LinkedHashSet<>();
+    private SharedPreferences prefs; private LinearLayout content;
+    private String screen="map", zone="Alles", filter="Alles", kitchenCap="Normaal", crowd="Normaal", opening="17:00 - 22:00";
+    private boolean edit=false; private int front=3,kitchen=2,avgMinutes=120,askSize=4;
 
-    private final ArrayList<Table> tables = new ArrayList<>();
-    private SharedPreferences prefs;
-    private LinearLayout content;
-    private String screen = "map";
-    private String zone = "Alles";
-    private String filter = "Alles";
-    private boolean editMode;
-    private int frontStaff = 3;
-    private int kitchenStaff = 2;
-    private String kitchenCapacity = "Normaal";
-    private String crowdLevel = "Normaal";
-    private int callerSize = 4;
+    @Override public void onCreate(Bundle b){super.onCreate(b); prefs=getSharedPreferences(PREFS,MODE_PRIVATE); loadAll(); autoAssignAll(); render();}
 
-    @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        loadSettings();
-        loadTables();
-        render();
-    }
-
-    private void render() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        LinearLayout root = col();
-        root.setPadding(dp(12), dp(12), dp(12), dp(16));
-        root.setBackgroundColor(CREAM);
-        scroll.addView(root);
-
-        LinearLayout head = row();
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout titles = col();
-        titles.addView(label("De Peperboom", 14, DARK_GREEN, true));
-        titles.addView(label("Live Tafelbord", 29, INK, true));
-        head.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
-        head.addView(pill(editMode ? "Bewerkmodus" : "Service", editMode ? ORANGE : DARK_GREEN));
-        root.addView(head);
-        root.addView(gap(10));
-        root.addView(summary());
-        root.addView(gap(8));
-        root.addView(nav());
-        root.addView(gap(8));
-        content = col();
-        root.addView(content);
-
-        if ("risk".equals(screen)) renderRisk();
-        else if ("free".equals(screen)) renderAvailability();
-        else renderMap();
+    private void render(){
+        ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true);
+        LinearLayout root=col(); root.setPadding(dp(12),dp(12),dp(12),dp(18)); root.setBackgroundColor(CREAM); scroll.addView(root);
+        LinearLayout head=row(); head.setGravity(Gravity.CENTER_VERTICAL); LinearLayout title=col(); title.addView(text("Restaurant De Peperboom",14,DARK_GREEN,true)); title.addView(text("Live Tafelbord",28,INK,true)); head.addView(title,new LinearLayout.LayoutParams(0,-2,1)); head.addView(pill(edit?"Bewerken":"Service",edit?ORANGE:DARK_GREEN)); root.addView(head);
+        root.addView(gap(10)); root.addView(cards()); root.addView(gap(8)); root.addView(nav()); root.addView(gap(8)); content=col(); root.addView(content);
+        if("res".equals(screen)) renderBookings(); else if("free".equals(screen)) renderFree(); else if("risk".equals(screen)) renderRisk(); else if("settings".equals(screen)) renderSettings(); else renderMap();
         setContentView(scroll);
     }
 
-    private LinearLayout summary() {
-        LinearLayout all = col();
-        LinearLayout r1 = row();
-        r1.addView(tile("Vrij", count(Status.FREE), GREEN), weight());
-        r1.addView(tile("Bezet", count(Status.OCCUPIED), RED), weight());
-        r1.addView(tile("Bijna vrij", count(Status.SOON), ORANGE), weight());
-        LinearLayout r2 = row();
-        r2.addView(tile("Rekening", count(Status.BILL), BLUE), weight());
-        r2.addView(tile("Geblokkeerd", count(Status.BLOCKED), GREY), weight());
-        r2.addView(tile("Let op", warningCount(), DARK_RED), weight());
-        all.addView(r1); all.addView(r2);
-        return all;
-    }
+    private LinearLayout cards(){LinearLayout box=col(),a=row(),b=row(); a.addView(card("Vrij",count(Status.FREE),GREEN),weight()); a.addView(card("Bezet",count(Status.OCCUPIED),RED),weight()); a.addView(card("Bijna vrij",count(Status.SOON),ORANGE),weight()); b.addView(card("Rekening",count(Status.BILL),BLUE),weight()); b.addView(card("Geblokkeerd",count(Status.BLOCKED),GREY),weight()); b.addView(card("Let op",warnings(),DARK_RED),weight()); box.addView(a); box.addView(b); return box;}
+    private TextView card(String s,int n,int c){TextView v=text(n+"\n"+s,13,c,true); v.setGravity(Gravity.CENTER); v.setMinHeight(dp(58)); v.setBackground(bg(Color.WHITE,c,1,8)); return v;}
+    private LinearLayout nav(){LinearLayout box=col(),a=row(),b=row(); a.addView(navBtn("Plattegrond","map"),weight()); a.addView(navBtn("Reserveringen","res"),weight()); b.addView(navBtn("Beschikbaarheid","free"),weight()); b.addView(navBtn("Risico","risk"),weight()); b.addView(navBtn("Instellingen","settings"),weight()); box.addView(a); box.addView(b); if("map".equals(screen)){LinearLayout f1=row(),f2=row(); f1.addView(filterBtn("Alles"),weight()); f1.addView(filterBtn("Binnen"),weight()); f1.addView(filterBtn("Tuin / buitenterras"),weight()); f2.addView(filterBtn("Alleen risico"),weight()); f2.addView(filterBtn("Alleen rekening"),weight()); f2.addView(filterBtn("Alleen bijna vrij"),weight()); box.addView(f1); box.addView(f2);} return box;}
+    private Button navBtn(String s,String target){boolean on=screen.equals(target); Button b=button(s,on?DARK_GREEN:Color.WHITE,on?Color.WHITE:DARK_GREEN); b.setOnClickListener(v->{screen=target; edit=false; selected.clear(); render();}); return b;}
+    private Button filterBtn(String s){boolean on=filter.equals(s); Button b=button(s,on?DARK_GREEN:Color.WHITE,on?Color.WHITE:DARK_GREEN); b.setTextSize(12); b.setOnClickListener(v->{filter=s; if("Binnen".equals(s))zone="Binnen"; else if("Tuin / buitenterras".equals(s))zone="Tuin"; else zone="Alles"; render();}); return b;}
 
-    private TextView tile(String text, int amount, int color) {
-        TextView v = label(amount + "\n" + text, 13, color, true);
-        v.setGravity(Gravity.CENTER);
-        v.setMinHeight(dp(58));
-        v.setBackground(bg(Color.WHITE, color, 1, 8));
-        return v;
-    }
+    private void renderMap(){LinearLayout z=row(); z.addView(zoneBtn("Alles"),weight()); z.addView(zoneBtn("Binnen"),weight()); z.addView(zoneBtn("Tuin"),weight()); content.addView(z); Button e=button(edit?"Klaar met bewerken":"Plattegrond bewerken",edit?ORANGE:DARK_GREEN,Color.WHITE); e.setOnClickListener(v->{edit=!edit; selected.clear(); render();}); content.addView(e,full()); content.addView(text(edit?"Tik om te selecteren. Sleep of gebruik de pijlen. Tafels klikken op het raster.":"Tik op een tafel voor snelle acties.",14,Color.rgb(89,81,67),false)); FrameLayout frame=new FrameLayout(this); frame.setBackground(bg(Color.rgb(255,253,247),LINE,1,10)); frame.addView(new Plan(this),new FrameLayout.LayoutParams(-1,dp(540))); content.addView(frame,full()); if(edit) editPanel();}
+    private Button zoneBtn(String z){String label="Tuin".equals(z)?"Tuin / buitenterras":z; boolean on=zone.equals(z); Button b=button(label,on?DARK_GREEN:Color.WHITE,on?Color.WHITE:DARK_GREEN); b.setOnClickListener(v->{zone=z; filter="Tuin".equals(z)?"Tuin / buitenterras":z; render();}); return b;}
+    private void editPanel(){LinearLayout p=panel(); p.addView(text("Plattegrond bewerken",21,INK,true)); p.addView(text(selected.isEmpty()?"Geen tafel geselecteerd":selected.size()+" tafel(s) geselecteerd",15,WARM,true)); LinearLayout a=row(); Button add=button("Tafel toevoegen",DARK_GREEN,Color.WHITE); add.setOnClickListener(v->editTable(new Table("Nieuw","Alles".equals(zone)?"Binnen":zone,50,50,15,15,"Rond",2),true)); Button save=button("Tafel opslaan",BLUE,Color.WHITE); save.setOnClickListener(v->{saveTables(); toast("Plattegrond opgeslagen");}); a.addView(add,weight()); a.addView(save,weight()); p.addView(a); LinearLayout r1=row(),r2=row(); r1.addView(move("Omhoog",0,-5),weight()); r1.addView(move("Omlaag",0,5),weight()); r2.addView(move("Links",-5,0),weight()); r2.addView(move("Rechts",5,0),weight()); p.addView(r1); p.addView(r2); LinearLayout m=row(); Button change=button("Wijzig",Color.WHITE,DARK_GREEN); change.setOnClickListener(v->{Table t=firstSelected(); if(t!=null)editTable(t,false);}); Button dup=button("Dupliceer",Color.WHITE,DARK_GREEN); dup.setOnClickListener(v->duplicate()); m.addView(change,weight()); m.addView(dup,weight()); p.addView(m); LinearLayout c=row(); Button comb=button("Combineer",ORANGE,Color.WHITE); comb.setOnClickListener(v->combine()); Button split=button("Splitsen",GREY,Color.WHITE); split.setOnClickListener(v->split()); c.addView(comb,weight()); c.addView(split,weight()); p.addView(c); Button del=button("Verwijder geselecteerd",DARK_RED,Color.WHITE); del.setOnClickListener(v->removeSelected()); p.addView(del,full()); content.addView(p,full());}
+    private Button move(String s,int dx,int dy){Button b=button(s,Color.WHITE,DARK_GREEN); b.setOnClickListener(v->{for(String n:selected){Table t=table(n); if(t!=null){t.x=clamp(t.x+dx,5,95); t.y=clamp(t.y+dy,8,95); snap(t);}} saveTables(); render();}); return b;}
 
-    private LinearLayout nav() {
-        LinearLayout box = col();
-        LinearLayout tabs = row();
-        tabs.addView(tab("Plattegrond", "map"), weight());
-        tabs.addView(tab("Risico", "risk"), weight());
-        tabs.addView(tab("Beschikbaarheid", "free"), weight());
-        box.addView(tabs);
-        if ("map".equals(screen)) {
-            LinearLayout f1 = row();
-            f1.addView(filter("Alles"), weight());
-            f1.addView(filter("Binnen"), weight());
-            f1.addView(filter("Tuin"), weight());
-            box.addView(f1);
-            LinearLayout f2 = row();
-            f2.addView(filter("Alleen risico"), weight());
-            f2.addView(filter("Alleen rekening"), weight());
-            f2.addView(filter("Alleen bijna vrij"), weight());
-            box.addView(f2);
-        }
-        return box;
-    }
+    private void renderBookings(){LinearLayout top=panel(); top.addView(text("Reserveringen vandaag",24,INK,true)); top.addView(text("Op tijd gesorteerd. De app kiest automatisch een passende tafel.",14,Color.rgb(89,81,67),false)); Button add=button("Reservering toevoegen",DARK_GREEN,Color.WHITE); add.setOnClickListener(v->bookingDialog(new Booking(),true)); top.addView(add,full()); content.addView(top,full()); Collections.sort(bookings,(a,b)->a.time.compareTo(b.time)); if(bookings.isEmpty()){content.addView(info("Geen reserveringen voor vandaag.",GREEN)); return;} for(Booking r:bookings){LinearLayout p=panel(); int c=bookingColor(r.status); p.setBackground(bg(Color.WHITE,c,1,8)); p.addView(text(r.time+"  "+r.name,20,INK,true)); p.addView(text(r.people+" personen - "+preference(r.pref)+" - "+r.status,15,c,true)); p.addView(text("Tafel: "+(r.assignment.isEmpty()?"nog geen tafel":r.assignment),15,INK,false)); if(!r.advice.isEmpty())p.addView(text(r.advice,15,DARK_RED,true)); if(!r.note.isEmpty())p.addView(text("Notitie: "+r.note,14,Color.rgb(82,76,65),false)); LinearLayout x=row(); Button place=button("Plaats gast",GREEN,Color.WHITE); place.setOnClickListener(v->place(r)); Button table=button("Wijzig tafel",BLUE,Color.WHITE); table.setOnClickListener(v->chooseTable(r)); x.addView(place,weight()); x.addView(table,weight()); p.addView(x); LinearLayout y=row(); Button editB=button("Notitie / wijzig",Color.WHITE,DARK_GREEN); editB.setOnClickListener(v->bookingDialog(r,false)); Button cancel=button("Annuleer",GREY,Color.WHITE); cancel.setOnClickListener(v->{r.status="Geannuleerd"; clearBooking(r.id); saveAll(); render();}); Button noshow=button("No-show",DARK_RED,Color.WHITE); noshow.setOnClickListener(v->{r.status="No-show"; clearBooking(r.id); saveAll(); render();}); y.addView(editB,weight()); y.addView(cancel,weight()); y.addView(noshow,weight()); p.addView(y); content.addView(p,full());}}
+    private void bookingDialog(Booking r,boolean fresh){LinearLayout box=col(); box.setPadding(dp(8),0,dp(8),0); EditText name=field("Naam gast",r.name), time=field("Tijd",r.time.isEmpty()?rounded():r.time), people=field("Aantal personen",r.people>0?""+r.people:""); people.setInputType(InputType.TYPE_CLASS_NUMBER); Spinner pref=spinner(new String[]{"Geen voorkeur","Binnen","Tuin"},r.pref.isEmpty()?"Geen voorkeur":r.pref); Spinner status=spinner(new String[]{"Verwacht","Geplaatst","Geannuleerd","No-show"},r.status.isEmpty()?"Verwacht":r.status); EditText note=field("Notitie",r.note); box.addView(name); box.addView(time); box.addView(people); box.addView(text("Voorkeur",14,INK,true)); box.addView(pref); box.addView(text("Status",14,INK,true)); box.addView(status); box.addView(note); new AlertDialog.Builder(this).setTitle(fresh?"Reservering toevoegen":"Reservering wijzigen").setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{r.name=value(name,"Gast"); r.time=normalize(time.getText().toString(),rounded()); r.people=Math.max(1,number(people,Math.max(1,r.people))); r.pref=pref.getSelectedItem().toString(); r.status=status.getSelectedItem().toString(); r.note=note.getText().toString().trim(); if(fresh)bookings.add(r); assign(r,true); saveAll(); render();}).show();}
+    private void chooseTable(Booking r){ArrayList<Candidate> list=candidates(r.people,r.pref,true); ArrayList<String> labels=new ArrayList<>(); labels.add("Geen tafel"); for(Candidate c:list)labels.add(c.label); Spinner sp=spinner(labels.toArray(new String[0]),"Geen tafel"); new AlertDialog.Builder(this).setTitle("Tafel wijzigen").setView(sp).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{clearBooking(r.id); r.tables.clear(); String s=sp.getSelectedItem().toString(); if("Geen tafel".equals(s)){r.assignment=""; r.advice="Geen passende tafel gekoppeld.";} else for(Candidate c:list)if(c.label.equals(s))apply(r,c,true); saveAll(); render();}).show();}
+    private void place(Booking r){if(r.tables.isEmpty())assign(r,true); r.status="Geplaatst"; for(String n:r.tables){Table t=table(n); if(t!=null){t.status=Status.OCCUPIED; t.guest=r.name; t.party=r.people; t.time=r.time; t.note=r.note; t.bookingId=r.id;}} saveAll(); render();}
 
-    private Button tab(String title, String target) {
-        Button b = btn(title, screen.equals(target) ? DARK_GREEN : Color.WHITE, screen.equals(target) ? Color.WHITE : DARK_GREEN);
-        b.setOnClickListener(v -> { screen = target; editMode = false; render(); });
-        return b;
-    }
+    private void renderFree(){LinearLayout p=panel(); p.addView(text("Beschikbaarheid",24,INK,true)); p.addView(stepper("Aantal personen",askSize,n->{askSize=Math.max(1,n); render();})); p.addView(text("Vrije tafels binnen: "+count("Binnen",Status.FREE),17,GREEN,true)); p.addView(text("Vrije tafels buiten: "+count("Tuin",Status.FREE),17,GREEN,true)); p.addView(text("Bijna vrij: "+count(Status.SOON)+" tafel(s)",17,ORANGE,true)); p.addView(text("Plaatsbaar binnen: "+capacity("Binnen",Status.FREE)+" personen",16,INK,false)); p.addView(text("Plaatsbaar buiten: "+capacity("Tuin",Status.FREE)+" personen",16,INK,false)); TextView a=text(phoneAdvice(),19,Color.WHITE,true); a.setPadding(dp(14),dp(14),dp(14),dp(14)); a.setBackground(bg(DARK_GREEN,DARK_GREEN,0,10)); p.addView(gap(8)); p.addView(a); content.addView(p,full()); LinearLayout combos=panel(); combos.addView(text("Mogelijke combinaties",20,INK,true)); ArrayList<Candidate> cs=comboCandidates(askSize,"Geen voorkeur"); if(cs.isEmpty())combos.addView(text("Geen directe combinatie nodig of mogelijk.",15,Color.rgb(82,76,65),false)); else for(Candidate c:cs)combos.addView(text(c.label+" - "+c.capacity+" personen",16,ORANGE,true)); content.addView(combos,full()); for(Table t:tables)if(t.status==Status.FREE||t.status==Status.SOON){TextView v=text("Tafel "+t.name+" - "+zoneLabel(t.zone)+" - "+t.capacity+" personen - "+statusLabel(t.status),16,INK,false); v.setPadding(dp(12),dp(10),dp(12),dp(10)); v.setBackground(bg(Color.WHITE,statusColor(t.status),1,8)); v.setOnClickListener(x->service(t)); content.addView(v,full());}}
+    private void renderRisk(){Risk r=calcRisk(); int c=r.level==2?DARK_RED:r.level==1?ORANGE:GREEN; TextView top=text(r.title,23,Color.WHITE,true); top.setGravity(Gravity.CENTER); top.setPadding(dp(14),dp(16),dp(14),dp(16)); top.setBackground(bg(c,c,0,10)); content.addView(top,full()); LinearLayout p=panel(); p.addView(stepper("Medewerkers bediening",front,n->{front=Math.max(1,n); saveSettings(); render();})); p.addView(stepper("Keukenmedewerkers",kitchen,n->{kitchen=Math.max(1,n); saveSettings(); render();})); p.addView(choice("Keukencapaciteit",new String[]{"Laag","Normaal","Hoog"},kitchenCap,s->{kitchenCap=s; saveSettings(); render();})); p.addView(choice("Drukteverwachting",new String[]{"Rustig","Normaal","Druk","Extreem druk"},crowd,s->{crowd=s; saveSettings(); render();})); content.addView(p,full()); for(String s:r.lines)content.addView(info(s,c)); timeline();}
+    private void timeline(){LinearLayout p=panel(); p.addView(text("Dagtijdlijn",22,INK,true)); HashMap<String,Integer> per=new HashMap<>(); for(Booking b:bookings)if("Verwacht".equals(b.status)||"Geplaatst".equals(b.status))per.put(b.time,per.containsKey(b.time)?per.get(b.time)+1:1); for(Booking b:bookings){int n=per.containsKey(b.time)?per.get(b.time):0; int c=n>=4?DARK_RED:n>=3?ORANGE:bookingColor(b.status); TextView v=text(b.time+"  "+b.name+"  tafel "+(b.assignment.isEmpty()?"?":b.assignment)+"  "+b.status+(n>=3?" - piekmoment":""),15,INK,false); v.setPadding(dp(10),dp(9),dp(10),dp(9)); v.setBackground(bg(Color.WHITE,c,1,8)); p.addView(v,full());} if(bookings.isEmpty())p.addView(text("Geen reserveringen op de tijdlijn.",15,Color.rgb(82,76,65),false)); content.addView(p,full());}
+    private void renderSettings(){LinearLayout p=panel(); p.addView(text("Instellingen",24,INK,true)); p.addView(text("Lokale gegevens blijven bewaard na opnieuw openen.",14,Color.rgb(82,76,65),false)); p.addView(text("Openingstijden: "+opening,16,DARK_GREEN,true)); p.addView(stepper("Gemiddelde tafelduur",avgMinutes,n->{avgMinutes=clamp(n,30,240); saveSettings(); render();})); p.addView(text("Zones: Binnen en Tuin / buitenterras",16,DARK_GREEN,true)); content.addView(p,full()); content.addView(settingsButton("Reset demo-data",WARM,()->reset(true)),full()); content.addView(settingsButton("Reset plattegrond",ORANGE,()->{tables.clear(); seedTables(); selected.clear(); saveTables(); render();}),full()); content.addView(settingsButton("Alle reserveringen vandaag wissen",GREY,()->{bookings.clear(); for(Table t:tables)if(!t.bookingId.isEmpty())t.clearGuest(); saveAll(); render();}),full());}
+    private Button settingsButton(String s,int c,Runnable r){Button b=button(s,c,Color.WHITE); b.setOnClickListener(v->new AlertDialog.Builder(this).setTitle(s).setMessage("Weet je het zeker?").setNegativeButton("Terug",null).setPositiveButton("Ja",(d,w)->r.run()).show()); return b;}
 
-    private Button filter(String value) {
-        Button b = btn(value, filter.equals(value) ? DARK_GREEN : Color.WHITE, filter.equals(value) ? Color.WHITE : DARK_GREEN);
-        b.setTextSize(12);
-        b.setOnClickListener(v -> {
-            filter = value;
-            zone = ("Binnen".equals(value) || "Tuin".equals(value)) ? value : "Alles";
-            render();
-        });
-        return b;
-    }
+    private void service(Table base){ArrayList<Table> group=group(base); LinearLayout box=col(); box.setPadding(dp(8),0,dp(8),0); box.addView(text(group.size()>1?"Combinatie "+groupName(group):"Tafel "+base.name,22,INK,true)); box.addView(text(groupCapacity(group)+" personen - "+statusLabel(base.status),15,statusColor(base.status),true)); EditText guest=field("Gastnaam",base.guest), party=field("Personen",base.party>0?""+base.party:""), time=field("Tijd",base.time), note=field("Notitie",base.note); party.setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(guest); box.addView(party); box.addView(time); box.addView(note); action(box,"Reservering koppelen",BLUE,()->linkBooking(base)); action(box,"Walk-in plaatsen",GREEN,()->{applyGuest(group,guest,party,time,note); set(group,Status.OCCUPIED); if(time.getText().toString().trim().isEmpty())for(Table t:group)t.time=now(); saveTables(); render();}); action(box,"Gast geplaatst",GREEN,()->{applyGuest(group,guest,party,time,note); set(group,Status.OCCUPIED); saveTables(); render();}); action(box,"Rekening",BLUE,()->{applyGuest(group,guest,party,time,note); set(group,Status.BILL); saveTables(); render();}); action(box,"Bijna vrij",ORANGE,()->{applyGuest(group,guest,party,time,note); set(group,Status.SOON); saveTables(); render();}); action(box,"Vrijmaken",GREEN,()->{for(Table t:group)t.clear(); saveTables(); render();}); action(box,"Blokkeren",GREY,()->{applyGuest(group,guest,party,time,note); set(group,Status.BLOCKED); saveTables(); render();}); action(box,"Annuleren",DARK_RED,()->{for(Table t:group)t.clear(); saveTables(); render();}); new AlertDialog.Builder(this).setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{applyGuest(group,guest,party,time,note); saveTables(); render();}).show();}
+    private void action(LinearLayout box,String s,int c,Runnable r){Button b=button(s,c,Color.WHITE); b.setOnClickListener(v->r.run()); box.addView(b,full());}
+    private void linkBooking(Table t){ArrayList<Booking> list=new ArrayList<>(); ArrayList<String> labels=new ArrayList<>(); labels.add("Geen reservering"); for(Booking b:bookings)if("Verwacht".equals(b.status)){list.add(b); labels.add(b.time+" - "+b.name+" ("+b.people+")");} Spinner sp=spinner(labels.toArray(new String[0]),"Geen reservering"); new AlertDialog.Builder(this).setTitle("Reservering koppelen").setView(sp).setNegativeButton("Terug",null).setPositiveButton("Koppelen",(d,w)->{int i=sp.getSelectedItemPosition()-1; if(i>=0&&i<list.size()){Booking b=list.get(i); clearBooking(b.id); Candidate c=new Candidate("Tafel "+t.name,t.zone,t.capacity); for(Table x:group(t))c.names.add(x.name); apply(b,c,false); saveAll(); render();}}).show();}
+    private void editTable(Table t,boolean fresh){LinearLayout box=col(); box.setPadding(dp(8),0,dp(8),0); EditText name=field("Tafelnummer",t.name), cap=field("Aantal personen",""+t.capacity), w=field("Breedte",""+t.width), h=field("Hoogte",""+t.height); cap.setInputType(InputType.TYPE_CLASS_NUMBER); w.setInputType(InputType.TYPE_CLASS_NUMBER); h.setInputType(InputType.TYPE_CLASS_NUMBER); Spinner shape=spinner(new String[]{"Vierkant","Rechthoek","Rond"},t.shape), z=spinner(new String[]{"Binnen","Tuin"},t.zone); box.addView(name); box.addView(cap); box.addView(w); box.addView(h); box.addView(text("Vorm",14,INK,true)); box.addView(shape); box.addView(text("Zone",14,INK,true)); box.addView(z); AlertDialog.Builder b=new AlertDialog.Builder(this).setTitle(fresh?"Tafel toevoegen":"Tafel wijzigen").setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,which)->{String old=t.name; t.name=value(name,"Nieuw"); t.capacity=Math.max(1,number(cap,t.capacity)); t.width=clamp(number(w,t.width),10,30); t.height=clamp(number(h,t.height),10,30); t.shape=shape.getSelectedItem().toString(); t.zone=z.getSelectedItem().toString(); snap(t); if(fresh)tables.add(t); rename(old,t.name); selected.clear(); selected.add(t.name); saveAll(); render();}); if(!fresh)b.setNeutralButton("Verwijderen",(d,wc)->{tables.remove(t); selected.remove(t.name); saveAll(); render();}); b.show();}
 
-    private void renderMap() {
-        LinearLayout zones = row();
-        Button inside = btn("Binnen", "Binnen".equals(zone) ? DARK_GREEN : Color.WHITE, "Binnen".equals(zone) ? Color.WHITE : DARK_GREEN);
-        inside.setOnClickListener(v -> { zone = "Binnen"; filter = "Binnen"; render(); });
-        Button garden = btn("Tuin / buitenterras", "Tuin".equals(zone) ? DARK_GREEN : Color.WHITE, "Tuin".equals(zone) ? Color.WHITE : DARK_GREEN);
-        garden.setOnClickListener(v -> { zone = "Tuin"; filter = "Tuin"; render(); });
-        zones.addView(inside, weight()); zones.addView(garden, weight());
-        content.addView(zones);
-        Button edit = btn(editMode ? "Klaar met bewerken" : "Plattegrond bewerken", editMode ? ORANGE : DARK_GREEN, Color.WHITE);
-        edit.setOnClickListener(v -> { editMode = !editMode; render(); });
-        content.addView(edit, full());
-        content.addView(label(editMode ? "Sleep tafels. Tik om nummer, vorm, grootte of personen te wijzigen." : "Tik op een tafel voor acties.", 14, Color.rgb(91, 84, 72), false));
-        content.addView(gap(8));
-        FrameLayout frame = new FrameLayout(this);
-        frame.setBackground(bg(Color.rgb(255,253,247), Color.rgb(218,207,185), 1, 10));
-        frame.addView(new PlanView(this), new FrameLayout.LayoutParams(-1, dp(530)));
-        content.addView(frame, full());
-        if (editMode) {
-            Button add = btn("Tafel toevoegen", DARK_GREEN, Color.WHITE);
-            add.setOnClickListener(v -> editTable(new Table("Nieuw", "Alles".equals(zone) ? "Binnen" : zone, 50, 50, 12, "Rond", 2)));
-            content.addView(add, full());
-        }
-    }
+    private class Plan extends View{Paint p=new Paint(Paint.ANTI_ALIAS_FLAG); Table drag; boolean moved; float sx,sy; Plan(Context c){super(c);} protected void onDraw(Canvas c){p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255,253,247)); c.drawRect(0,0,getWidth(),getHeight(),p); drawGrid(c); drawGroups(c); for(Table t:tables)if(visible(t))drawTable(c,t);} private void drawGrid(Canvas c){p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(1)); p.setColor(Color.rgb(236,229,211)); for(int x=5;x<100;x+=5){float px=x*getWidth()/100f; c.drawLine(px,dp(42),px,getHeight()-dp(18),p);} for(int y=10;y<100;y+=5){float py=y*getHeight()/100f; c.drawLine(dp(10),py,getWidth()-dp(10),py,p);} p.setStrokeWidth(dp(2)); p.setColor(LINE); c.drawRoundRect(dp(8),dp(8),getWidth()-dp(8),getHeight()-dp(8),dp(14),dp(14),p); p.setStyle(Paint.Style.FILL); p.setColor(DARK_GREEN); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(15)); c.drawText("Alles".equals(zone)?"Binnen en Tuin / buitenterras":zoneLabel(zone),dp(18),dp(31),p);} private void drawGroups(Canvas c){HashSet<String> done=new HashSet<>(); for(Table t:tables)if(!t.groupId.isEmpty()&&!done.contains(t.groupId)&&visible(t)){done.add(t.groupId); RectF b=null; for(Table x:group(t))if(visible(x)){RectF r=rect(x); if(b==null)b=new RectF(r); else b.union(r);} if(b!=null){b.inset(-dp(8),-dp(8)); p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255,243,222)); c.drawRoundRect(b,dp(12),dp(12),p); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(3)); p.setColor(ORANGE); c.drawRoundRect(b,dp(12),dp(12),p);}}} private void drawTable(Canvas c,Table t){RectF r=rect(t); int color=isRisk(t)?DARK_RED:statusColor(t.status); p.setStyle(Paint.Style.FILL); p.setColor(color); if("Rond".equals(t.shape))c.drawOval(r,p); else c.drawRoundRect(r,dp(7),dp(7),p); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(selected.contains(t.name)?dp(5):dp(2)); p.setColor(selected.contains(t.name)?WARM:Color.WHITE); if("Rond".equals(t.shape))c.drawOval(r,p); else c.drawRoundRect(r,dp(7),dp(7),p); p.setStyle(Paint.Style.FILL); p.setTextAlign(Paint.Align.CENTER); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(t.name.length()>3?12:16)); p.setColor(Color.WHITE); c.drawText(t.name,r.centerX(),r.centerY()+dp(5),p); if(!t.guest.isEmpty()||!t.time.isEmpty()||t.status==Status.BILL||t.status==Status.SOON||isRisk(t)){p.setTextSize(dp(10)); String s=!t.guest.isEmpty()?t.guest:statusLabel(t.status); if(s.length()>12)s=s.substring(0,12); c.drawText(s,r.centerX(),r.bottom+dp(13),p); if(!t.time.isEmpty())c.drawText(t.time,r.centerX(),r.bottom+dp(25),p);} p.setTextAlign(Paint.Align.LEFT);} public boolean onTouchEvent(MotionEvent e){Table h=hit(e.getX(),e.getY()); if(e.getAction()==MotionEvent.ACTION_DOWN){drag=h; moved=false; sx=e.getX(); sy=e.getY(); return h!=null;} if(e.getAction()==MotionEvent.ACTION_MOVE&&edit&&drag!=null){if(Math.abs(e.getX()-sx)>dp(5)||Math.abs(e.getY()-sy)>dp(5))moved=true; drag.x=clamp(Math.round(e.getX()*100f/Math.max(1,getWidth())),5,95); drag.y=clamp(Math.round(e.getY()*100f/Math.max(1,getHeight())),8,95); snap(drag); invalidate(); return true;} if(e.getAction()==MotionEvent.ACTION_UP&&drag!=null){Table t=drag; drag=null; if(edit){if(!moved){if(selected.contains(t.name))selected.remove(t.name); else selected.add(t.name);} saveTables(); render();} else service(t); return true;} return true;} private RectF rect(Table t){float cx=t.x*getWidth()/100f,cy=t.y*getHeight()/100f; return new RectF(cx-dp(t.width),cy-dp(t.height),cx+dp(t.width),cy+dp(t.height));} private Table hit(float x,float y){for(int i=tables.size()-1;i>=0;i--){Table t=tables.get(i); if(!visible(t))continue; RectF r=rect(t); r.inset(-dp(10),-dp(10)); if(r.contains(x,y))return t;} return null;}}
 
-    private void renderRisk() {
-        Risk risk = risk();
-        int color = risk.level == 2 ? DARK_RED : risk.level == 1 ? ORANGE : GREEN;
-        TextView top = label(risk.title, 24, Color.WHITE, true);
-        top.setGravity(Gravity.CENTER);
-        top.setPadding(dp(14), dp(16), dp(14), dp(16));
-        top.setBackground(bg(color, color, 0, 10));
-        content.addView(top, full());
-        LinearLayout panel = col();
-        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
-        panel.setBackground(bg(Color.WHITE, Color.rgb(230,223,207), 1, 8));
-        panel.addView(stepper("Bediening", frontStaff, n -> { frontStaff = Math.max(1, n); saveSettings(); render(); }));
-        panel.addView(stepper("Keuken", kitchenStaff, n -> { kitchenStaff = Math.max(1, n); saveSettings(); render(); }));
-        panel.addView(choice("Keukencapaciteit", new String[]{"Laag","Normaal","Hoog"}, kitchenCapacity, s -> { kitchenCapacity = s; saveSettings(); render(); }));
-        panel.addView(choice("Drukteverwachting", new String[]{"Rustig","Normaal","Druk","Extreem druk"}, crowdLevel, s -> { crowdLevel = s; saveSettings(); render(); }));
-        content.addView(panel, full());
-        for (String line : risk.lines) {
-            TextView v = label(line, 16, INK, false);
-            v.setPadding(dp(12), dp(10), dp(12), dp(10));
-            v.setBackground(bg(Color.WHITE, color, 1, 8));
-            content.addView(v, full());
-        }
-    }
+    private void assign(Booking b,boolean makeGroup){if("Geannuleerd".equals(b.status)||"No-show".equals(b.status))return; clearBooking(b.id); ArrayList<Candidate> cs=candidates(b.people,b.pref,makeGroup); Candidate exact=null, small=null; for(Candidate c:cs){if(c.capacity<b.people)continue; if(exact==null&&c.capacity==b.people)exact=c; if(small==null||c.capacity<small.capacity)small=c;} if(exact!=null)apply(b,exact,makeGroup); else if(small!=null)apply(b,small,makeGroup); else {b.assignment=""; b.tables.clear(); b.advice=availabilityAdvice(b.people,b.pref);}}
+    private void apply(Booking b,Candidate c,boolean makeGroup){b.tables.clear(); b.tables.addAll(c.names); b.assignment=c.label.replace("Tafel ","").replace("Combinatie ",""); b.advice=c.advice; if(c.names.size()>1&&makeGroup){String id="combi-"+UUID.randomUUID(); for(String n:c.names){Table t=table(n); if(t!=null)t.groupId=id;}} for(String n:c.names){Table t=table(n); if(t!=null){t.guest=b.name; t.party=b.people; t.time=b.time; t.note=b.note; t.bookingId=b.id; if(!"Geplaatst".equals(b.status))t.status=Status.EXPECTED;}}}
+    private ArrayList<Candidate> candidates(int people,String pref,boolean combos){ArrayList<Candidate> out=new ArrayList<>(); HashSet<String> seen=new HashSet<>(); for(Table t:tables){if(!zoneOk(t.zone,pref)||!freeForBooking(t))continue; if(!t.groupId.isEmpty()){if(seen.contains(t.groupId))continue; seen.add(t.groupId); ArrayList<Table> g=group(t); Candidate c=new Candidate("Combinatie "+groupName(g),t.zone,groupCapacity(g)); for(Table x:g)c.names.add(x.name); c.advice="Combinatie staat klaar."; out.add(c);} else {Candidate c=new Candidate("Tafel "+t.name,t.zone,t.capacity); c.names.add(t.name); c.advice="Passende tafel gekoppeld."; out.add(c);}} if(combos&&people>4)out.addAll(comboCandidates(people,pref)); Collections.sort(out,(a,b)->a.capacity!=b.capacity?a.capacity-b.capacity:a.label.compareTo(b.label)); return out;}
+    private ArrayList<Candidate> comboCandidates(int people,String pref){ArrayList<Candidate> out=new ArrayList<>(), free=new ArrayList<>(); ArrayList<Table> ts=new ArrayList<>(); for(Table t:tables)if(t.groupId.isEmpty()&&freeForBooking(t)&&zoneOk(t.zone,pref))ts.add(t); for(int i=0;i<ts.size();i++)for(int j=i+1;j<ts.size();j++){Table a=ts.get(i),b=ts.get(j); if(!a.zone.equals(b.zone))continue; int cap=a.capacity+b.capacity; if(cap>=people&&Math.abs(a.x-b.x)<=20&&Math.abs(a.y-b.y)<=20){Candidate c=new Candidate("Combinatie "+a.name+" + "+b.name,a.zone,cap); c.names.add(a.name); c.names.add(b.name); c.advice="Advies: combineer tafel "+a.name+" + "+b.name+"."; out.add(c);}} Collections.sort(out,(a,b)->a.capacity-b.capacity); return out;}
+    private Risk calcRisk(){Risk r=new Risk(); int score=0, occupied=count(Status.OCCUPIED)+count(Status.LATE), guests=guests(), soon=count(Status.SOON), bill=count(Status.BILL), resSoon=bookingsSoon(); if(occupied>=18){score+=2; r.lines.add("Neem tijdelijk minder walk-ins aan.");} else if(occupied>=12){score++; r.lines.add("Veel bezette tafels. Werk per zone.");} if(soon>=5){score++; r.lines.add("Zet iemand op afruimen en indekken.");} if(bill>=4){score++; r.lines.add("Versnel afrekenen bij tafels op rekening.");} if(resSoon>=4){score+=2; r.lines.add("Laat keuken weten dat piek eraan komt.");} else if(resSoon>=2){score++; r.lines.add("Houd reserveringstafels vrij.");} if(guests/Math.max(1,front)>22){score+=2; r.lines.add("Zet extra bediening op terras.");} int limit="Hoog".equals(kitchenCap)?24:"Laag".equals(kitchenCap)?12:18; if(guests/Math.max(1,kitchen)>limit){score+=2; r.lines.add("Beperk grote groepen tijdelijk.");} if("Druk".equals(crowd))score++; if("Extreem druk".equals(crowd)){score+=2; r.lines.add("Plan reserveringen meer gespreid.");} if(r.lines.isEmpty()){r.lines.add("Rustig beeld. Service is haalbaar."); r.lines.add("Blijf bijna-vrije tafels actief volgen.");} r.level=score>=5?2:score>=2?1:0; r.title=r.level==2?"Rood: risico op vertraging":r.level==1?"Oranje: opletten":"Groen: haalbaar"; return r;}
 
-    private void renderAvailability() {
-        LinearLayout panel = col();
-        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
-        panel.setBackground(bg(Color.WHITE, Color.rgb(230,223,207), 1, 8));
-        panel.addView(label("Beschikbaarheid nu", 24, INK, true));
-        panel.addView(stepper("Aantal personen", callerSize, n -> { callerSize = Math.max(1, n); render(); }));
-        panel.addView(label("Vrij binnen: " + capacity("Binnen", Status.FREE) + " personen", 18, GREEN, true));
-        panel.addView(label("Vrij buiten: " + capacity("Tuin", Status.FREE) + " personen", 18, GREEN, true));
-        panel.addView(label("Bijna vrij binnen: " + capacity("Binnen", Status.SOON) + " personen", 16, ORANGE, true));
-        panel.addView(label("Bijna vrij buiten: " + capacity("Tuin", Status.SOON) + " personen", 16, ORANGE, true));
-        TextView advice = label(phoneAdvice(), 20, Color.WHITE, true);
-        advice.setPadding(dp(14), dp(14), dp(14), dp(14));
-        advice.setBackground(bg(DARK_GREEN, DARK_GREEN, 0, 10));
-        panel.addView(gap(8)); panel.addView(advice);
-        content.addView(panel, full());
-        for (Table t : tables) if (t.status == Status.FREE || t.status == Status.SOON) {
-            TextView row = label("Tafel " + t.name + " - " + t.zone + " - " + t.capacity + " personen - " + t.status.label, 16, INK, false);
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            row.setBackground(bg(Color.WHITE, t.status.color, 1, 8));
-            row.setOnClickListener(v -> service(t));
-            content.addView(row, full());
-        }
-    }
+    private void loadAll(){loadSettings(); loadTables(); loadBookings();} private void loadTables(){tables.clear(); try{JSONArray a=new JSONArray(prefs.getString(TABLES,"")); for(int i=0;i<a.length();i++)tables.add(Table.from(a.getJSONObject(i)));}catch(Exception e){tables.clear();} if(tables.isEmpty()){seedTables(); saveTables();}} private void loadBookings(){bookings.clear(); try{JSONArray a=new JSONArray(prefs.getString(RES,"")); for(int i=0;i<a.length();i++)bookings.add(Booking.from(a.getJSONObject(i)));}catch(Exception ignored){}} private void loadSettings(){try{JSONObject j=new JSONObject(prefs.getString(SET,"{}")); front=j.optInt("bediening",3); kitchen=j.optInt("keuken",2); kitchenCap=j.optString("keukencapaciteit","Normaal"); crowd=j.optString("drukte","Normaal"); opening=j.optString("opening","17:00 - 22:00"); avgMinutes=j.optInt("tafelduur",120);}catch(Exception ignored){}}
+    private void saveTables(){JSONArray a=new JSONArray(); for(Table t:tables)a.put(t.json()); prefs.edit().putString(TABLES,a.toString()).apply();} private void saveBookings(){JSONArray a=new JSONArray(); for(Booking b:bookings)a.put(b.json()); prefs.edit().putString(RES,a.toString()).apply();} private void saveSettings(){JSONObject j=new JSONObject(); try{j.put("bediening",front); j.put("keuken",kitchen); j.put("keukencapaciteit",kitchenCap); j.put("drukte",crowd); j.put("opening",opening); j.put("tafelduur",avgMinutes);}catch(Exception ignored){} prefs.edit().putString(SET,j.toString()).apply();} private void saveAll(){saveTables(); saveBookings(); saveSettings();}
+    private void reset(boolean demo){tables.clear(); bookings.clear(); selected.clear(); seedTables(); if(demo){bookings.add(new Booking("Jansen","18:00",2,"Binnen","Kinderstoel")); bookings.add(new Booking("De Vries","18:30",4,"Tuin","")); bookings.add(new Booking("Bakker","19:00",6,"Geen voorkeur","Verjaardag")); bookings.add(new Booking("Smit","19:00",2,"Binnen","")); bookings.add(new Booking("Koster","19:15",4,"Tuin",""));} autoAssignAll(); saveAll(); render();}
+    private void seedTables(){String[] in={"1","2","3","3b","4","5","5b","6","7","8","9","10","11","12","13","14","15","16"}; int[][] pi={{14,15},{30,15},{47,15},{63,15},{81,15},{16,34},{34,34},{52,34},{72,34},{18,54},{36,54},{54,54},{75,54},{16,75},{34,75},{52,75},{70,75},{86,75}}; for(int i=0;i<in.length;i++){boolean s=in[i].contains("b"); tables.add(new Table(in[i],"Binnen",pi[i][0],pi[i][1],s?13:15,s?13:15,s?"Rond":"Vierkant",s?2:4));} String[] out={"40","41","41-1","42","43","43-2","44","45","46","47","47-2","48","49","49-2","50","51","52","53","53-2","54","54-2","55","56","57","58"}; int[][] po={{11,14},{26,14},{41,14},{57,14},{75,14},{90,14},{12,31},{29,31},{46,31},{64,31},{82,31},{13,49},{32,49},{49,49},{67,49},{85,49},{13,68},{31,68},{48,68},{66,68},{84,68},{20,86},{42,86},{64,86},{86,86}}; for(int i=0;i<out.length;i++){boolean s=out[i].contains("-"); tables.add(new Table(out[i],"Tuin",po[i][0],po[i][1],s?13:15,s?13:15,s?"Rond":"Vierkant",s?2:4));}}
 
-    private LinearLayout stepper(String title, int value, NumberSave save) {
-        LinearLayout r = row(); r.setGravity(Gravity.CENTER_VERTICAL);
-        r.addView(label(title, 16, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
-        Button min = btn("-", Color.WHITE, DARK_GREEN); Button plus = btn("+", Color.WHITE, DARK_GREEN);
-        TextView num = label(String.valueOf(value), 18, INK, true); num.setGravity(Gravity.CENTER);
-        min.setOnClickListener(v -> save.save(value - 1)); plus.setOnClickListener(v -> save.save(value + 1));
-        r.addView(min, small()); r.addView(num, small()); r.addView(plus, small());
-        return r;
-    }
+    private boolean visible(Table t){if(!"Alles".equals(zone)&&!t.zone.equals(zone))return false; if("Alleen risico".equals(filter))return isRisk(t); if("Alleen rekening".equals(filter))return t.status==Status.BILL; if("Alleen bijna vrij".equals(filter))return t.status==Status.SOON; return true;} private boolean isRisk(Table t){if(t.status==Status.LATE||t.status==Status.RISK)return true; if((t.status==Status.OCCUPIED||t.status==Status.BILL)&&since(t.time)>=avgMinutes+20)return true; if(t.status==Status.EXPECTED){long m=until(t.time); return m<=15&&m>=-10;} return false;} private boolean freeForBooking(Table t){return t.status==Status.FREE||(t.status==Status.EXPECTED&&t.bookingId.isEmpty());} private boolean zoneOk(String z,String pref){return pref==null||pref.isEmpty()||"Geen voorkeur".equals(pref)||z.equals(pref);} private String zoneLabel(String z){return "Tuin".equals(z)?"Tuin / buitenterras":z;} private String preference(String p){return "Tuin".equals(p)?"tuin / buitenterras":p.toLowerCase(Locale.ROOT);} private String statusLabel(Status s){switch(s){case FREE:return"Vrij";case OCCUPIED:return"Bezet";case SOON:return"Bijna vrij";case BILL:return"Rekening";case BLOCKED:return"Geblokkeerd";case LATE:return"Te laat";case RISK:return"Risico";case EXPECTED:return"Verwacht";} return"Vrij";} private int statusColor(Status s){switch(s){case FREE:return GREEN;case OCCUPIED:return RED;case SOON:return ORANGE;case BILL:return BLUE;case BLOCKED:return GREY;case LATE:case RISK:return DARK_RED;case EXPECTED:return WARM;} return GREEN;} private int bookingColor(String s){if("Geplaatst".equals(s))return GREEN; if("Geannuleerd".equals(s))return GREY; if("No-show".equals(s))return DARK_RED; return WARM;}
+    private int count(Status s){int n=0; for(Table t:tables)if(t.status==s)n++; return n;} private int count(String z,Status s){int n=0; for(Table t:tables)if(t.zone.equals(z)&&t.status==s)n++; return n;} private int warnings(){int n=0; for(Table t:tables)if(isRisk(t))n++; return n;} private int capacity(String z,Status s){int n=0; for(Table t:tables)if(t.zone.equals(z)&&t.status==s)n+=t.capacity; return n;} private boolean hasFree(String z,int p){for(Table t:tables)if(t.zone.equals(z)&&t.status==Status.FREE&&t.capacity>=p)return true; return false;} private boolean hasSoon(String z,int p){for(Table t:tables)if(t.zone.equals(z)&&t.status==Status.SOON&&t.capacity>=p)return true; return false;} private int guests(){int n=0; HashSet<String> seen=new HashSet<>(); for(Table t:tables)if(t.status==Status.OCCUPIED||t.status==Status.SOON||t.status==Status.BILL||t.status==Status.LATE){if(!t.groupId.isEmpty()){if(seen.contains(t.groupId))continue; seen.add(t.groupId); n+=Math.max(t.party,groupCapacity(group(t)));} else n+=Math.max(t.party,t.capacity);} return n;} private int bookingsSoon(){int n=0; for(Booking b:bookings){long m=until(b.time); if(m>=0&&m<=45&&"Verwacht".equals(b.status))n++;} return n;} private String phoneAdvice(){if(hasFree("Binnen",askSize))return"Voor "+askSize+" personen hebben we nu plek binnen."; if(hasFree("Tuin",askSize))return"Voor "+askSize+" personen hebben we nu plek buiten."; if(hasSoon("Binnen",askSize)||hasSoon("Tuin",askSize))return"Voor "+askSize+" personen is plek mogelijk over ongeveer 20 minuten."; if(!comboCandidates(askSize,"Geen voorkeur").isEmpty())return"Voor "+askSize+" personen kan een combinatie gemaakt worden."; return"Voor "+askSize+" personen adviseren we reserveren op later tijdstip.";} private String availabilityAdvice(int p,String pref){if(!"Tuin".equals(pref)&&hasSoon("Binnen",p))return"Pas beschikbaar rond "+later(20)+" binnen."; if(!"Binnen".equals(pref)&&hasSoon("Tuin",p))return"Alleen tuin beschikbaar rond "+later(20)+"."; if(bookingsSoon()>=4)return"Risico: te veel tafels tegelijk. Spreid reserveringen."; return"Geen passende tafel beschikbaar. Advies: later tijdstip voorstellen.";}
+    private ArrayList<Table> group(Table t){ArrayList<Table> g=new ArrayList<>(); if(t.groupId.isEmpty()){g.add(t); return g;} for(Table x:tables)if(t.groupId.equals(x.groupId))g.add(x); return g;} private int groupCapacity(ArrayList<Table> g){int n=0; for(Table t:g)n+=t.capacity; return n;} private String groupName(ArrayList<Table> g){ArrayList<String> names=new ArrayList<>(); for(Table t:g)names.add(t.name); return join(names);} private String join(ArrayList<String> names){StringBuilder b=new StringBuilder(); for(int i=0;i<names.size();i++){if(i>0)b.append(" + "); b.append(names.get(i));} return b.toString();} private Table table(String n){for(Table t:tables)if(t.name.equals(n))return t; return null;} private Table firstSelected(){for(String n:selected){Table t=table(n); if(t!=null)return t;} return null;} private void snap(Table t){t.x=clamp(Math.round(t.x/5f)*5,5,95); t.y=clamp(Math.round(t.y/5f)*5,8,95);} private void set(ArrayList<Table> g,Status s){for(Table t:g)t.status=s;} private void applyGuest(ArrayList<Table> g,EditText guest,EditText party,EditText time,EditText note){int p=number(party,0); String nm=guest.getText().toString().trim(), ti=normalize(time.getText().toString(),""), no=note.getText().toString().trim(); for(Table t:g){t.guest=nm; t.party=p; t.time=ti; t.note=no;}}
+    private void combine(){if(selected.size()<2){toast("Selecteer minimaal twee tafels"); return;} String id="combi-"+UUID.randomUUID(); for(String n:selected){Table t=table(n); if(t!=null)t.groupId=id;} saveTables(); render();} private void split(){for(String n:selected){Table t=table(n); if(t!=null&&!t.groupId.isEmpty()){String id=t.groupId; for(Table x:tables)if(id.equals(x.groupId))x.groupId="";}} saveTables(); render();} private void duplicate(){Table t=firstSelected(); if(t==null)return; Table c=t.copy(); int i=1; while(table(t.name+"-"+i)!=null)i++; c.name=t.name+"-"+i; c.x=clamp(c.x+5,5,95); c.y=clamp(c.y+5,8,95); c.groupId=""; c.clear(); tables.add(c); selected.clear(); selected.add(c.name); saveTables(); render();} private void removeSelected(){if(selected.isEmpty())return; new AlertDialog.Builder(this).setTitle("Tafels verwijderen").setMessage("Verwijder geselecteerde tafels?").setNegativeButton("Terug",null).setPositiveButton("Verwijder",(d,w)->{ArrayList<Table> del=new ArrayList<>(); for(Table t:tables)if(selected.contains(t.name))del.add(t); tables.removeAll(del); selected.clear(); saveAll(); render();}).show();}
+    private void clearBooking(String id){if(id==null||id.isEmpty())return; for(Table t:tables)if(id.equals(t.bookingId)){t.guest=""; t.party=0; t.time=""; t.note=""; t.bookingId=""; if(t.status==Status.EXPECTED)t.status=Status.FREE;}} private void autoAssignAll(){boolean changed=false; for(Booking b:bookings)if("Verwacht".equals(b.status)&&b.tables.isEmpty()){assign(b,true); changed=true;} if(changed)saveAll();} private void rename(String old,String now){for(Booking b:bookings){for(int i=0;i<b.tables.size();i++)if(b.tables.get(i).equals(old))b.tables.set(i,now); if(!b.tables.isEmpty())b.assignment=join(b.tables);}}
 
-    private LinearLayout choice(String title, String[] values, String selected, TextSave save) {
-        LinearLayout c = col(); c.addView(label(title, 16, INK, true));
-        Spinner sp = new Spinner(this);
-        sp.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values));
-        for (int i = 0; i < values.length; i++) if (values[i].equals(selected)) sp.setSelection(i);
-        sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) { if (!values[pos].equals(selected)) save.save(values[pos]); }
-            public void onNothingSelected(AdapterView<?> p) {}
-        });
-        c.addView(sp); return c;
-    }
+    private LinearLayout panel(){LinearLayout p=col(); p.setPadding(dp(12),dp(12),dp(12),dp(12)); p.setBackground(bg(Color.WHITE,LINE,1,8)); return p;} private TextView info(String s,int c){TextView v=text(s,16,INK,false); v.setPadding(dp(12),dp(10),dp(12),dp(10)); v.setBackground(bg(Color.WHITE,c,1,8)); return v;} private LinearLayout stepper(String title,int val,Num save){LinearLayout r=row(); r.setGravity(Gravity.CENTER_VERTICAL); r.addView(text(title,16,INK,true),new LinearLayout.LayoutParams(0,-2,1)); Button m=button("-",Color.WHITE,DARK_GREEN), p=button("+",Color.WHITE,DARK_GREEN); TextView n=text(""+val,18,INK,true); n.setGravity(Gravity.CENTER); m.setOnClickListener(v->save.save(val-1)); p.setOnClickListener(v->save.save(val+1)); r.addView(m,small()); r.addView(n,small()); r.addView(p,small()); return r;} private LinearLayout choice(String title,String[] vals,String selected,TextSave save){LinearLayout b=col(); b.addView(text(title,16,INK,true)); Spinner sp=spinner(vals,selected); sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> p,View v,int pos,long id){String s=vals[pos]; if(!s.equals(selected))save.save(s);} public void onNothingSelected(AdapterView<?> p){}}); b.addView(sp); return b;} private Spinner spinner(String[] vals,String selected){Spinner s=new Spinner(this); s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,vals)); for(int i=0;i<vals.length;i++)if(vals[i].equals(selected))s.setSelection(i); return s;}
+    private LinearLayout col(){LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l;} private LinearLayout row(){LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); l.setBaselineAligned(false); return l;} private TextView text(String s,int sp,int c,boolean bold){TextView v=new TextView(this); v.setText(s); v.setTextSize(sp); v.setTextColor(c); if(bold)v.setTypeface(Typeface.DEFAULT_BOLD); return v;} private TextView pill(String s,int c){TextView v=text(s,13,Color.WHITE,true); v.setGravity(Gravity.CENTER); v.setPadding(dp(10),dp(7),dp(10),dp(7)); v.setBackground(bg(c,c,0,18)); return v;} private Button button(String s,int bg,int fg){Button b=new Button(this); b.setText(s); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(Typeface.DEFAULT_BOLD); b.setTextColor(fg); b.setMinHeight(dp(48)); b.setPadding(dp(8),dp(4),dp(8),dp(4)); b.setBackground(bg(bg,bg==Color.WHITE?LINE:bg,1,8)); return b;} private EditText field(String hint,String val){EditText e=new EditText(this); e.setHint(hint); e.setText(val); e.setTextSize(18); return e;} private GradientDrawable bg(int fill,int stroke,int sw,int radius){GradientDrawable g=new GradientDrawable(); g.setColor(fill); g.setCornerRadius(dp(radius)); if(sw>0)g.setStroke(dp(sw),stroke); return g;} private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p;} private LinearLayout.LayoutParams full(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.setMargins(0,dp(4),0,dp(4)); return p;} private LinearLayout.LayoutParams small(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(48),dp(48)); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p;} private View gap(int h){View v=new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1,dp(h))); return v;} private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);} private int clamp(int v,int min,int max){return Math.max(min,Math.min(max,v));} private int number(EditText e,int f){try{return Integer.parseInt(e.getText().toString().trim());}catch(Exception ex){return f;}} private String value(EditText e,String f){String s=e.getText().toString().trim(); return s.isEmpty()?f:s;} private String now(){return LocalTime.now().format(TIME);} private String rounded(){LocalTime t=LocalTime.now(); int m=((t.getMinute()+14)/15)*15; return t.withMinute(0).withSecond(0).withNano(0).plusMinutes(m).format(TIME);} private String later(int m){return LocalTime.now().plusMinutes(m).format(TIME);} private String normalize(String s,String f){String c=s.trim().replace(".",":"); try{if(c.matches("\d{1,2}:\d{2}")){String[] p=c.split(":"); return LocalTime.of(Integer.parseInt(p[0]),Integer.parseInt(p[1])).format(TIME);} if(c.matches("\d{1,2}"))return LocalTime.of(Integer.parseInt(c),0).format(TIME);}catch(Exception ignored){} return f;} private long until(String s){try{return ChronoUnit.MINUTES.between(LocalTime.now(),LocalTime.parse(s,TIME));}catch(Exception e){return Long.MAX_VALUE;}} private long since(String s){try{return ChronoUnit.MINUTES.between(LocalTime.parse(s,TIME),LocalTime.now());}catch(Exception e){return 0;}} private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_SHORT).show();}
 
-    private void service(Table t) {
-        LinearLayout box = col(); box.setPadding(dp(8), 0, dp(8), 0);
-        box.addView(label("Tafel " + t.name + " - " + t.zone, 22, INK, true));
-        box.addView(label(t.capacity + " personen - " + t.status.label, 15, t.status.color, true));
-        EditText guest = field("Gastnaam", t.guest);
-        EditText people = field("Aantal personen", t.party > 0 ? String.valueOf(t.party) : ""); people.setInputType(InputType.TYPE_CLASS_NUMBER);
-        EditText time = field("Tijd / reservering", t.time);
-        EditText note = field("Notitie", t.note);
-        box.addView(guest); box.addView(people); box.addView(time); box.addView(note);
-        for (Status s : Status.values()) {
-            Button b = btn(s.action, s.color, Color.WHITE);
-            b.setOnClickListener(v -> { apply(t, guest, people, time, note); t.status = s; if (s == Status.FREE) t.clear(); if (s == Status.OCCUPIED && t.time.isEmpty()) t.time = now(); saveTables(); render(); });
-            box.addView(b, full());
-        }
-        new AlertDialog.Builder(this).setView(box).setNegativeButton("Terug", null).setPositiveButton("Opslaan", (d,w) -> { apply(t, guest, people, time, note); saveTables(); render(); }).show();
-    }
-
-    private void editTable(Table t) {
-        boolean fresh = !tables.contains(t);
-        LinearLayout box = col(); box.setPadding(dp(8), 0, dp(8), 0);
-        EditText name = field("Tafelnummer", t.name);
-        EditText cap = field("Aantal personen", String.valueOf(t.capacity)); cap.setInputType(InputType.TYPE_CLASS_NUMBER);
-        EditText size = field("Grootte", String.valueOf(t.size)); size.setInputType(InputType.TYPE_CLASS_NUMBER);
-        Spinner shape = spinner(new String[]{"Rond","Vierkant","Rechthoek"}, t.shape);
-        Spinner zonePick = spinner(new String[]{"Binnen","Tuin"}, t.zone);
-        box.addView(name); box.addView(cap); box.addView(size); box.addView(label("Vorm", 14, INK, true)); box.addView(shape); box.addView(label("Zone", 14, INK, true)); box.addView(zonePick);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(fresh ? "Tafel toevoegen" : "Tafel bewerken").setView(box).setNegativeButton("Terug", null).setPositiveButton("Opslaan", (d,w) -> {
-            t.name = val(name, "Nieuw"); t.capacity = Math.max(1, parse(cap, t.capacity)); t.size = clamp(parse(size, t.size), 7, 22); t.shape = shape.getSelectedItem().toString(); t.zone = zonePick.getSelectedItem().toString(); if (fresh) tables.add(t); saveTables(); render();
-        });
-        if (!fresh) b.setNeutralButton("Verwijderen", (d,w) -> { tables.remove(t); saveTables(); render(); });
-        b.show();
-    }
-
-    private Spinner spinner(String[] values, String selected) {
-        Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values));
-        for (int i = 0; i < values.length; i++) if (values[i].equals(selected)) s.setSelection(i);
-        return s;
-    }
-
-    private void apply(Table t, EditText guest, EditText people, EditText time, EditText note) {
-        t.guest = guest.getText().toString().trim();
-        t.party = parse(people, t.party);
-        t.time = time.getText().toString().trim().replace("-", "");
-        t.note = note.getText().toString().trim();
-    }
-
-    private class PlanView extends View {
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); Table drag; boolean moved;
-        PlanView(Context c) { super(c); setMinimumHeight(dp(530)); }
-        protected void onDraw(Canvas c) {
-            p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255,253,247)); c.drawRect(0,0,getWidth(),getHeight(),p);
-            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(2)); p.setColor(Color.rgb(225,216,196)); c.drawRoundRect(dp(8),dp(8),getWidth()-dp(8),getHeight()-dp(8),dp(14),dp(14),p);
-            p.setStyle(Paint.Style.FILL); p.setTextSize(dp(15)); p.setTypeface(Typeface.DEFAULT_BOLD); p.setColor(DARK_GREEN);
-            c.drawText("Alles".equals(zone) ? "Binnen en Tuin / buitenterras" : ("Tuin".equals(zone) ? "Tuin / buitenterras" : "Binnen"), dp(18), dp(30), p);
-            p.setColor(Color.rgb(239,234,219)); c.drawRect(dp(20), dp(42), getWidth()-dp(20), dp(46), p); c.drawRect(dp(20), getHeight()-dp(44), getWidth()-dp(20), getHeight()-dp(40), p);
-            for (Table t : tables) if (visible(t)) drawTable(c, t);
-        }
-        private void drawTable(Canvas c, Table t) {
-            float cx = t.x * getWidth()/100f, cy = t.y * getHeight()/100f, s = dp(t.size), w = "Rechthoek".equals(t.shape) ? s*1.55f : s, h = "Rechthoek".equals(t.shape) ? s*.95f : s;
-            RectF r = new RectF(cx-w, cy-h, cx+w, cy+h); p.setStyle(Paint.Style.FILL); p.setColor(isRisk(t) ? DARK_RED : t.status.color);
-            if ("Rond".equals(t.shape)) c.drawOval(r,p); else c.drawRoundRect(r,dp(6),dp(6),p);
-            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(2)); p.setColor(Color.WHITE); if ("Rond".equals(t.shape)) c.drawOval(r,p); else c.drawRoundRect(r,dp(6),dp(6),p);
-            p.setStyle(Paint.Style.FILL); p.setTextAlign(Paint.Align.CENTER); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(t.name.length()>3?11:14)); p.setColor(Color.WHITE); c.drawText(t.name,cx,cy+dp(5),p);
-            if (t.status == Status.BILL || t.status == Status.SOON || isRisk(t)) { p.setTextSize(dp(10)); c.drawText(t.status.shortName,cx,cy+h+dp(15),p); }
-            p.setTextAlign(Paint.Align.LEFT);
-        }
-        public boolean onTouchEvent(MotionEvent e) {
-            Table hit = hit(e.getX(), e.getY());
-            if (e.getAction()==MotionEvent.ACTION_DOWN) { drag = hit; moved = false; return hit != null; }
-            if (e.getAction()==MotionEvent.ACTION_MOVE && editMode && drag != null) { drag.x = clamp(Math.round(e.getX()*100/Math.max(1,getWidth())),5,95); drag.y = clamp(Math.round(e.getY()*100/Math.max(1,getHeight())),5,95); moved = true; invalidate(); return true; }
-            if (e.getAction()==MotionEvent.ACTION_UP && drag != null) { Table t = drag; drag = null; if (editMode) { saveTables(); if (!moved) editTable(t); } else service(t); return true; }
-            return true;
-        }
-        private Table hit(float x, float y) { for (int i=tables.size()-1;i>=0;i--) { Table t=tables.get(i); if (!visible(t)) continue; float cx=t.x*getWidth()/100f, cy=t.y*getHeight()/100f, s=dp(t.size+8), w="Rechthoek".equals(t.shape)?s*1.7f:s; if (x>=cx-w && x<=cx+w && y>=cy-s && y<=cy+s) return t; } return null; }
-    }
-
-    private boolean visible(Table t) {
-        if (!"Alles".equals(zone) && !t.zone.equals(zone)) return false;
-        if ("Alleen risico".equals(filter)) return isRisk(t);
-        if ("Alleen rekening".equals(filter)) return t.status == Status.BILL;
-        if ("Alleen bijna vrij".equals(filter)) return t.status == Status.SOON;
-        return true;
-    }
-    private boolean isRisk(Table t) { return t.status == Status.LATE || longSeated(t) || reservationSoon(t); }
-    private boolean reservationSoon(Table t) { long m = minutesUntil(t.time); return t.status == Status.FREE && m >= 0 && m <= 30; }
-    private boolean longSeated(Table t) { return (t.status == Status.OCCUPIED || t.status == Status.LATE) && minutesSince(t.time) >= 135; }
-    private int count(Status s) { int n=0; for (Table t:tables) if (t.status==s) n++; return n; }
-    private int warningCount() { int n=0; for (Table t:tables) if (isRisk(t)) n++; return n; }
-    private int activeGuests() { int n=0; for (Table t:tables) if (t.status==Status.OCCUPIED||t.status==Status.SOON||t.status==Status.BILL||t.status==Status.LATE) n += Math.max(t.party, t.capacity); return n; }
-    private int capacity(String z, Status s) { int n=0; for (Table t:tables) if (t.zone.equals(z) && t.status==s) n += t.capacity; return n; }
-    private boolean tableFor(String z, Status s, int size) { for (Table t:tables) if (t.zone.equals(z)&&t.status==s&&t.capacity>=size) return true; return false; }
-    private String phoneAdvice() { if (tableFor("Binnen",Status.FREE,callerSize)&&tableFor("Tuin",Status.FREE,callerSize)) return "Voor " + callerSize + " personen hebben we nu binnen en buiten plek."; if (tableFor("Binnen",Status.FREE,callerSize)) return "Voor " + callerSize + " personen hebben we nu plek binnen. Buiten is waarschijnlijk later mogelijk."; if (tableFor("Tuin",Status.FREE,callerSize)) return "Voor " + callerSize + " personen hebben we nu plek buiten. Binnen is later mogelijk."; if (tableFor("Binnen",Status.SOON,callerSize)||tableFor("Tuin",Status.SOON,callerSize)) return "Voor " + callerSize + " personen is waarschijnlijk over 20 tot 30 minuten plek."; return "Voor " + callerSize + " personen is nu geen goede plek vrij. Vraag om later terug te bellen."; }
-
-    private Risk risk() {
-        Risk r = new Risk(); int score = 0, occupied = count(Status.OCCUPIED)+count(Status.LATE), soon = count(Status.SOON), bill = count(Status.BILL), guests = activeGuests();
-        if (occupied >= 18) { score+=2; r.lines.add("Veel tafels tegelijk bezet. Neem tijdelijk minder walk-ins aan."); } else if (occupied >= 12) { score++; r.lines.add("Veel bezette tafels. Werk strak per zone."); }
-        if (soon >= 5) { score++; r.lines.add("Veel tafels bijna klaar. Zet iemand op afruimen en indekken."); }
-        if (bill >= 4) { score++; r.lines.add("Veel tafels op rekening. Voorkant moet afrekenen versnellen."); }
-        int soonReservations = 0, lateTables = 0; for (Table t:tables) { if (reservationSoon(t)) soonReservations++; if (longSeated(t)) lateTables++; }
-        if (soonReservations >= 3) { score++; r.lines.add("Reserveringen komen bijna aan. Houd passende tafels vrij."); }
-        if (lateTables >= 3) { score++; r.lines.add("Tafels zitten lang. Check dessert, koffie of rekening."); }
-        if (guests / Math.max(1, frontStaff) > 22) { score+=2; r.lines.add("Te weinig bediening. Zet extra bediening op terras."); } else if (guests / Math.max(1, frontStaff) > 16) { score++; r.lines.add("Bediening staat strak. Verdeel taken duidelijk."); }
-        int kitchenLimit = "Hoog".equals(kitchenCapacity) ? 24 : "Laag".equals(kitchenCapacity) ? 12 : 18;
-        if (guests / Math.max(1, kitchenStaff) > kitchenLimit) { score+=2; r.lines.add("Keuken loopt risico, beperk grote tafels."); }
-        if ("Druk".equals(crowdLevel)) score++; if ("Extreem druk".equals(crowdLevel)) { score+=2; r.lines.add("Piekmoment verwacht tussen reserveringen en walk-ins."); }
-        if (r.lines.isEmpty()) { r.lines.add("Rustig beeld. Nieuwe gasten kunnen normaal geplaatst worden."); r.lines.add("Blijf reserveringstafels alvast vrijhouden."); }
-        r.level = score >= 5 ? 2 : score >= 2 ? 1 : 0; r.title = r.level==2 ? "Rood: risico op vertraging" : r.level==1 ? "Oranje: opletten" : "Groen: haalbaar"; return r;
-    }
-
-    private void loadTables() { tables.clear(); String raw = prefs.getString(TABLES_KEY, ""); if (!raw.isEmpty()) try { JSONArray a = new JSONArray(raw); for (int i=0;i<a.length();i++) tables.add(Table.from(a.getJSONObject(i))); } catch (Exception e) { tables.clear(); } if (tables.isEmpty()) { seed(); saveTables(); } }
-    private void saveTables() { JSONArray a = new JSONArray(); for (Table t:tables) a.put(t.json()); prefs.edit().putString(TABLES_KEY, a.toString()).apply(); }
-    private void loadSettings() { try { JSONObject j = new JSONObject(prefs.getString(SETTINGS_KEY, "{}")); frontStaff=j.optInt("front",3); kitchenStaff=j.optInt("kitchen",2); kitchenCapacity=j.optString("cap","Normaal"); crowdLevel=j.optString("crowd","Normaal"); } catch(Exception ignored){} }
-    private void saveSettings() { JSONObject j = new JSONObject(); try { j.put("front",frontStaff); j.put("kitchen",kitchenStaff); j.put("cap",kitchenCapacity); j.put("crowd",crowdLevel); } catch(Exception ignored){} prefs.edit().putString(SETTINGS_KEY,j.toString()).apply(); }
-    private void seed() { String[] inside={"1","2","3","3b","4","5","5b","6","7","8","9","10","11","12","13","14","15","16"}; int[][] pi={{14,16},{30,16},{47,16},{64,16},{82,17},{17,35},{35,35},{53,35},{72,36},{18,55},{36,56},{54,56},{75,57},{16,76},{34,77},{52,77},{70,77},{86,76}}; for(int i=0;i<inside.length;i++) tables.add(new Table(inside[i],"Binnen",pi[i][0],pi[i][1],inside[i].contains("b")?8:10,inside[i].contains("b")?"Rond":"Vierkant",inside[i].contains("b")?2:4)); String[] out={"40","41","41-1","42","43","43-2","44","45","46","47","47-2","48","49","49-2","50","51","52","53","53-2","54","54-2","55","56","57","58"}; int[][] po={{11,14},{26,14},{41,14},{57,14},{75,14},{90,14},{12,31},{29,31},{46,31},{64,31},{82,31},{13,49},{32,49},{49,49},{67,49},{85,49},{13,68},{31,68},{48,68},{66,68},{84,68},{20,86},{42,86},{64,86},{86,86}}; for(int i=0;i<out.length;i++) tables.add(new Table(out[i],"Tuin",po[i][0],po[i][1],out[i].contains("-")?8:10,out[i].contains("-")?"Rond":"Vierkant",out[i].contains("-")?2:4)); }
-
-    private enum Status { FREE("Vrij","Vrijmaken","vrij",GREEN), OCCUPIED("Bezet","Bezet zetten","bezet",RED), SOON("Bijna vrij","Bijna vrij","bijna",ORANGE), BILL("Rekening","Rekening", "rekening",BLUE), BLOCKED("Geblokkeerd","Blokkeren","blok",GREY), LATE("Te laat / risico","Te laat / risico","let op",DARK_RED); final String label, action, shortName; final int color; Status(String l,String a,String s,int c){label=l;action=a;shortName=s;color=c;} static Status from(String s){ for(Status st:values()) if(st.name().equals(s)) return st; if("BILL_REQUESTED".equals(s)) return BILL; if("ALMOST_FREE".equals(s)) return SOON; return FREE; } }
-    private static class Table { String name, zone, shape, guest="", time="", note=""; int x,y,size,capacity,party; Status status=Status.FREE; Table(String n,String z,int xx,int yy,int sz,String sh,int cap){name=n;zone=z;x=xx;y=yy;size=sz;shape=sh;capacity=cap;} void clear(){guest="";party=0;time="";note="";} JSONObject json(){ JSONObject j=new JSONObject(); try{j.put("name",name);j.put("zone",zone);j.put("x",x);j.put("y",y);j.put("size",size);j.put("shape",shape);j.put("capacity",capacity);j.put("party",party);j.put("status",status.name());j.put("guest",guest);j.put("time",time);j.put("note",note);}catch(Exception ignored){} return j;} static Table from(JSONObject j){ Table t=new Table(j.optString("name","?"),j.optString("zone","Binnen"),j.optInt("x",50),j.optInt("y",50),j.optInt("size",10),j.optString("shape","Rond"),j.optInt("capacity",2)); t.party=j.optInt("party",j.optInt("partySize",0)); t.status=Status.from(j.optString("status","FREE")); t.guest=j.optString("guest",j.optString("guestName","")); t.time=j.optString("time",j.optString("startTime","")); t.note=j.optString("note",""); return t; } }
-    private static class Risk { int level; String title; ArrayList<String> lines = new ArrayList<>(); }
-    private interface NumberSave { void save(int n); } private interface TextSave { void save(String s); }
-
-    private LinearLayout col(){ LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l; }
-    private LinearLayout row(){ LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); l.setBaselineAligned(false); return l; }
-    private TextView label(String s,int sp,int color,boolean bold){ TextView v=new TextView(this); v.setText(s); v.setTextSize(sp); v.setTextColor(color); if(bold)v.setTypeface(Typeface.DEFAULT_BOLD); return v; }
-    private TextView pill(String s,int color){ TextView v=label(s,13,Color.WHITE,true); v.setGravity(Gravity.CENTER); v.setPadding(dp(10),dp(7),dp(10),dp(7)); v.setBackground(bg(color,color,0,18)); return v; }
-    private Button btn(String s,int bg,int fg){ Button b=new Button(this); b.setText(s); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(Typeface.DEFAULT_BOLD); b.setTextColor(fg); b.setMinHeight(dp(48)); b.setBackground(bg(bg,bg==Color.WHITE?Color.rgb(222,214,198):bg,1,8)); return b; }
-    private EditText field(String hint,String value){ EditText e=new EditText(this); e.setHint(hint); e.setText(value); e.setTextSize(18); return e; }
-    private GradientDrawable bg(int fill,int stroke,int sw,int radius){ GradientDrawable g=new GradientDrawable(); g.setColor(fill); g.setCornerRadius(dp(radius)); if(sw>0)g.setStroke(dp(sw),stroke); return g; }
-    private LinearLayout.LayoutParams weight(){ LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p; }
-    private LinearLayout.LayoutParams full(){ LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.setMargins(0,dp(4),0,dp(4)); return p; }
-    private LinearLayout.LayoutParams small(){ LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(48),dp(48)); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p; }
-    private View gap(int h){ View v=new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1,dp(h))); return v; }
-    private int dp(int v){ return Math.round(v*getResources().getDisplayMetrics().density); }
-    private int parse(EditText e,int fallback){ try{return Integer.parseInt(e.getText().toString().trim());}catch(Exception ex){return fallback;} }
-    private int clamp(int v,int min,int max){ return Math.max(min,Math.min(max,v)); }
-    private String val(EditText e,String fallback){ String s=e.getText().toString().trim(); return s.isEmpty()?fallback:s; }
-    private String now(){ return LocalTime.now().format(TIME); }
-    private long minutesUntil(String s){ try{return ChronoUnit.MINUTES.between(LocalTime.now(),LocalTime.parse(s,TIME));}catch(Exception e){return Long.MAX_VALUE;} }
-    private long minutesSince(String s){ try{return ChronoUnit.MINUTES.between(LocalTime.parse(s,TIME),LocalTime.now());}catch(Exception e){return 0;} }
+    enum Status{FREE,OCCUPIED,SOON,BILL,BLOCKED,LATE,RISK,EXPECTED; static Status from(String s){for(Status x:values())if(x.name().equals(s))return x; if("ALMOST_FREE".equals(s))return SOON; if("BILL_REQUESTED".equals(s))return BILL; return FREE;}}
+    static class Table{String name,zone,shape,guest="",time="",note="",groupId="",bookingId=""; int x,y,width,height,capacity,party; Status status=Status.FREE; Table(String n,String z,int x,int y,int w,int h,String sh,int c){name=n;zone=z;this.x=x;this.y=y;width=w;height=h;shape=sh;capacity=c;} Table copy(){Table t=new Table(name,zone,x,y,width,height,shape,capacity); t.party=party;t.status=status;t.guest=guest;t.time=time;t.note=note;t.groupId=groupId;t.bookingId=bookingId;return t;} void clear(){status=Status.FREE; clearGuest();} void clearGuest(){guest="";party=0;time="";note="";bookingId="";} JSONObject json(){JSONObject j=new JSONObject(); try{j.put("name",name);j.put("zone",zone);j.put("x",x);j.put("y",y);j.put("width",width);j.put("height",height);j.put("shape",shape);j.put("capacity",capacity);j.put("party",party);j.put("status",status.name());j.put("guest",guest);j.put("time",time);j.put("note",note);j.put("groupId",groupId);j.put("bookingId",bookingId);}catch(Exception ignored){} return j;} static Table from(JSONObject j){int size=j.optInt("size",15); Table t=new Table(j.optString("name","?"),j.optString("zone","Binnen"),j.optInt("x",50),j.optInt("y",50),j.optInt("width",size),j.optInt("height",size),j.optString("shape","Vierkant"),j.optInt("capacity",2)); t.party=j.optInt("party",0); t.status=Status.from(j.optString("status","FREE")); t.guest=j.optString("guest",""); t.time=j.optString("time",""); t.note=j.optString("note",""); t.groupId=j.optString("groupId",""); t.bookingId=j.optString("bookingId",j.optString("reservationId","")); return t;}}
+    static class Booking{String id=UUID.randomUUID().toString(),name="",time="",pref="Geen voorkeur",note="",status="Verwacht",assignment="",advice=""; int people=2; ArrayList<String> tables=new ArrayList<>(); Booking(){} Booking(String n,String t,int p,String pref,String note){name=n;time=t;people=p;this.pref=pref;this.note=note;} JSONObject json(){JSONObject j=new JSONObject(); try{j.put("id",id);j.put("name",name);j.put("time",time);j.put("people",people);j.put("pref",pref);j.put("note",note);j.put("status",status);j.put("assignment",assignment);j.put("advice",advice);JSONArray a=new JSONArray(); for(String s:tables)a.put(s); j.put("tables",a);}catch(Exception ignored){} return j;} static Booking from(JSONObject j){Booking b=new Booking(); b.id=j.optString("id",UUID.randomUUID().toString()); b.name=j.optString("name",j.optString("guest","")); b.time=j.optString("time",""); b.people=j.optInt("people",j.optInt("party",2)); b.pref=j.optString("pref",j.optString("preference","Geen voorkeur")); b.note=j.optString("note",""); b.status=j.optString("status","Verwacht"); b.assignment=j.optString("assignment",""); b.advice=j.optString("advice",""); JSONArray a=j.optJSONArray("tables"); if(a==null)a=j.optJSONArray("tableNames"); if(a!=null)for(int i=0;i<a.length();i++)b.tables.add(a.optString(i)); return b;}}
+    static class Candidate{String label,zone,advice=""; int capacity; ArrayList<String> names=new ArrayList<>(); Candidate(String l,String z,int c){label=l;zone=z;capacity=c;}}
+    static class Risk{int level; String title; ArrayList<String> lines=new ArrayList<>();}
+    interface Num{void save(int n);} interface TextSave{void save(String s);} 
 }

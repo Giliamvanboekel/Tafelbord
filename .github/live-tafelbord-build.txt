@@ -1,0 +1,3 @@
+Live Tafelbord APK build trigger
+
+Deze notitie start een pull-request build zodat het artifact live-tafelbord-apk via GitHub Actions beschikbaar wordt.

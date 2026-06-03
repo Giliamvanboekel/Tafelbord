@@ -5,90 +5,667 @@ import android.os.*;
 import android.content.*;
 import android.graphics.*;
 import android.graphics.drawable.GradientDrawable;
-import android.text.InputType;
+import android.text.*;
 import android.view.*;
 import android.widget.*;
 import org.json.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 public class MainActivity extends Activity {
-    private static final String PREFS="live_tafelbord", K_T="tafels", K_R="reserveringen", K_S="instellingen";
-    private static final DateTimeFormatter TF=DateTimeFormatter.ofPattern("HH:mm",Locale.forLanguageTag("nl-NL"));
-    private static final int GREEN=Color.rgb(35,139,82), RED=Color.rgb(194,52,48), ORANGE=Color.rgb(221,133,39), BLUE=Color.rgb(37,99,173), GREY=Color.rgb(111,116,124), DARK_RED=Color.rgb(126,27,27), DARK_GREEN=Color.rgb(18,79,58), CREAM=Color.rgb(250,247,238), WARM=Color.rgb(180,126,63), INK=Color.rgb(26,42,34), LINE=Color.rgb(225,216,196);
-    private final ArrayList<Tafel> tafels=new ArrayList<>();
-    private final ArrayList<Res> reserveringen=new ArrayList<>();
-    private final LinkedHashSet<String> selectie=new LinkedHashSet<>();
-    private SharedPreferences prefs; private LinearLayout content;
-    private String scherm="plattegrond", zone="Alles", filter="Alles", keukenCap="Normaal", drukte="Normaal", opening="17:00 - 22:00";
-    private boolean bewerken=false; private int bediening=3, keuken=2, tafelduur=120, vraag=4;
+    private static final String PREFS = "live_tafelbord_horeca_v2";
+    private static final String KEY_TABLES = "tables", KEY_RES = "reservations", KEY_SETTINGS = "settings";
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm", Locale.forLanguageTag("nl-NL"));
+    private static final int CREAM = Color.rgb(250, 247, 238), PAPER = Color.rgb(255, 253, 247), INK = Color.rgb(28, 43, 35);
+    private static final int GREEN = Color.rgb(32, 132, 79), DARK_GREEN = Color.rgb(18, 77, 56), ORANGE = Color.rgb(222, 133, 38);
+    private static final int RED = Color.rgb(193, 55, 49), BLUE = Color.rgb(43, 103, 178), GREY = Color.rgb(112, 117, 124), DARK_GREY = Color.rgb(66, 70, 75), LINE = Color.rgb(225, 216, 196), WARM = Color.rgb(178, 125, 66), RISK_RED = Color.rgb(128, 28, 28);
 
-    @Override public void onCreate(Bundle b){super.onCreate(b); prefs=getSharedPreferences(PREFS,MODE_PRIVATE); laad(); autoReserveringen(); render();}
+    private final ArrayList<Table> tables = new ArrayList<>();
+    private final ArrayList<Reservation> reservations = new ArrayList<>();
+    private final LinkedHashSet<String> selectedTableIds = new LinkedHashSet<>();
+    private final ArrayList<Risk> risks = new ArrayList<>();
+    private SharedPreferences prefs;
+    private LinearLayout root, content;
+    private String screen = "map", activeZone = "Alles", resZoneFilter = "Alles", searchText = "";
+    private boolean serviceMode = true;
+    private LocalDate selectedDate = LocalDate.now();
+    private LocalTime selectedTime = roundedNow();
+    private int floorRevision = 1, serviceStaff = 4, kitchenStaff = 2, defaultDuration = 120;
+    private String kitchenCapacity = "Normaal", weather = "Normaal";
+    private String phoneDate = LocalDate.now().toString(), phoneTime = "19:00", phoneParty = "4", phoneZone = "Geen voorkeur", phoneAdvice = "Vul de beller in en tik op Controleer.";
 
-    private void render(){
-        ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true);
-        LinearLayout root=kolom(); root.setPadding(dp(12),dp(12),dp(12),dp(18)); root.setBackgroundColor(CREAM); scroll.addView(root);
-        LinearLayout kop=rij(); kop.setGravity(Gravity.CENTER_VERTICAL); LinearLayout titel=kolom(); titel.addView(txt("Restaurant De Peperboom",14,DARK_GREEN,true)); titel.addView(txt("Live Tafelbord",28,INK,true)); kop.addView(titel,new LinearLayout.LayoutParams(0,-2,1)); kop.addView(pil(bewerken?"Bewerken":"Service",bewerken?ORANGE:DARK_GREEN)); root.addView(kop);
-        root.addView(gap(10)); root.addView(kaarten()); root.addView(gap(8)); root.addView(navigatie()); root.addView(gap(8)); content=kolom(); root.addView(content);
-        if("res".equals(scherm)) reserveringenScherm(); else if("vrij".equals(scherm)) beschikbaarScherm(); else if("risico".equals(scherm)) risicoScherm(); else if("instellingen".equals(scherm)) instellingenScherm(); else plattegrondScherm();
+    @Override public void onCreate(Bundle b) {
+        super.onCreate(b);
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        loadAll();
+        computeRisks();
+        render();
+    }
+
+    private void render() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        root = column();
+        root.setPadding(dp(12), dp(12), dp(12), dp(20));
+        root.setBackgroundColor(CREAM);
+        scroll.addView(root);
+
+        LinearLayout header = row();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout title = column();
+        title.addView(text("Restaurant De Peperboom", 14, DARK_GREEN, true));
+        title.addView(text("Live Tafelbord", 28, INK, true));
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView mode = pill(serviceMode ? "Service modus" : "Bewerk modus", serviceMode ? DARK_GREEN : ORANGE);
+        header.addView(mode);
+        root.addView(header);
+        root.addView(gap(8));
+        root.addView(dashboard());
+        root.addView(gap(8));
+        root.addView(timeline());
+        root.addView(gap(8));
+        root.addView(navigation());
+        root.addView(gap(8));
+        content = column();
+        root.addView(content);
+
+        if ("res".equals(screen)) renderReservations();
+        else if ("phone".equals(screen)) renderPhone();
+        else if ("risk".equals(screen)) renderRisk();
+        else if ("settings".equals(screen)) renderSettings();
+        else renderMap();
         setContentView(scroll);
     }
 
-    private LinearLayout kaarten(){LinearLayout box=kolom(),a=rij(),b=rij(); a.addView(kaart("Vrij",tel(Status.VRIJ),GREEN),gewicht()); a.addView(kaart("Bezet",tel(Status.BEZET),RED),gewicht()); a.addView(kaart("Bijna vrij",tel(Status.BIJNA),ORANGE),gewicht()); b.addView(kaart("Rekening",tel(Status.REKENING),BLUE),gewicht()); b.addView(kaart("Geblokkeerd",tel(Status.GEBLOKKEERD),GREY),gewicht()); b.addView(kaart("Let op",letOp(),DARK_RED),gewicht()); box.addView(a); box.addView(b); return box;}
-    private TextView kaart(String s,int n,int c){TextView v=txt(n+"\n"+s,13,c,true); v.setGravity(Gravity.CENTER); v.setMinHeight(dp(58)); v.setBackground(bg(Color.WHITE,c,1,8)); return v;}
-    private LinearLayout navigatie(){LinearLayout box=kolom(),a=rij(),b=rij(); a.addView(nav("Plattegrond","plattegrond"),gewicht()); a.addView(nav("Reserveringen","res"),gewicht()); b.addView(nav("Beschikbaarheid","vrij"),gewicht()); b.addView(nav("Risico","risico"),gewicht()); b.addView(nav("Instellingen","instellingen"),gewicht()); box.addView(a); box.addView(b); if("plattegrond".equals(scherm)){LinearLayout f1=rij(),f2=rij(); f1.addView(flt("Alles"),gewicht()); f1.addView(flt("Binnen"),gewicht()); f1.addView(flt("Tuin / buitenterras"),gewicht()); f2.addView(flt("Alleen risico"),gewicht()); f2.addView(flt("Alleen rekening"),gewicht()); f2.addView(flt("Alleen bijna vrij"),gewicht()); box.addView(f1); box.addView(f2);} return box;}
-    private Button nav(String s,String doel){boolean aan=scherm.equals(doel); Button b=knop(s,aan?DARK_GREEN:Color.WHITE,aan?Color.WHITE:DARK_GREEN); b.setOnClickListener(v->{scherm=doel; bewerken=false; selectie.clear(); render();}); return b;}
-    private Button flt(String s){boolean aan=filter.equals(s); Button b=knop(s,aan?DARK_GREEN:Color.WHITE,aan?Color.WHITE:DARK_GREEN); b.setTextSize(12); b.setOnClickListener(v->{filter=s; if("Binnen".equals(s))zone="Binnen"; else if("Tuin / buitenterras".equals(s))zone="Tuin"; else zone="Alles"; render();}); return b;}
+    private LinearLayout dashboard() {
+        computeRisks();
+        LinearLayout box = column();
+        LinearLayout a = row(), b = row();
+        a.addView(dash("Reserveringen", todayReservations(), DARK_GREEN), weight());
+        a.addView(dash("Gasten", todayGuests(), WARM), weight());
+        a.addView(dash("Nu vrij", freeNow(), GREEN), weight());
+        b.addView(dash("30 min vrij", freeSoon(), ORANGE), weight());
+        b.addView(dash("Risico's", risks.size(), riskColor()), weight());
+        b.addView(dash("Rekening", countStatus("rekening"), BLUE), weight());
+        box.addView(a); box.addView(b);
+        return box;
+    }
 
-    private void plattegrondScherm(){LinearLayout z=rij(); z.addView(zoneKnop("Alles"),gewicht()); z.addView(zoneKnop("Binnen"),gewicht()); z.addView(zoneKnop("Tuin"),gewicht()); content.addView(z); Button edit=knop(bewerken?"Klaar met bewerken":"Plattegrond bewerken",bewerken?ORANGE:DARK_GREEN,Color.WHITE); edit.setOnClickListener(v->{bewerken=!bewerken; selectie.clear(); render();}); content.addView(edit,vol()); content.addView(txt(bewerken?"Tik om te selecteren. Sleep of gebruik de pijlen. Tafels klikken op het raster.":"Tik op een tafel voor snelle acties.",14,Color.rgb(89,81,67),false)); FrameLayout frame=new FrameLayout(this); frame.setBackground(bg(Color.rgb(255,253,247),LINE,1,10)); frame.addView(new Plan(this),new FrameLayout.LayoutParams(-1,dp(540))); content.addView(frame,vol()); if(bewerken) bewerkPaneel();}
-    private Button zoneKnop(String z){String label="Tuin".equals(z)?"Tuin / buitenterras":z; boolean aan=zone.equals(z); Button b=knop(label,aan?DARK_GREEN:Color.WHITE,aan?Color.WHITE:DARK_GREEN); b.setOnClickListener(v->{zone=z; filter="Tuin".equals(z)?"Tuin / buitenterras":z; render();}); return b;}
-    private void bewerkPaneel(){LinearLayout p=paneel(); p.addView(txt("Plattegrond bewerken",21,INK,true)); p.addView(txt(selectie.isEmpty()?"Geen tafel geselecteerd":selectie.size()+" tafel(s) geselecteerd",15,WARM,true)); LinearLayout a=rij(); Button add=knop("Tafel toevoegen",DARK_GREEN,Color.WHITE); add.setOnClickListener(v->tafelDialoog(new Tafel("Nieuw","Alles".equals(zone)?"Binnen":zone,50,50,15,15,"Rond",2),true)); Button save=knop("Tafel opslaan",BLUE,Color.WHITE); save.setOnClickListener(v->{bewaarTafels(); toast("Plattegrond opgeslagen");}); a.addView(add,gewicht()); a.addView(save,gewicht()); p.addView(a); LinearLayout p1=rij(),p2=rij(); p1.addView(verplaats("Omhoog",0,-5),gewicht()); p1.addView(verplaats("Omlaag",0,5),gewicht()); p2.addView(verplaats("Links",-5,0),gewicht()); p2.addView(verplaats("Rechts",5,0),gewicht()); p.addView(p1); p.addView(p2); LinearLayout m=rij(); Button wijzig=knop("Wijzig",Color.WHITE,DARK_GREEN); wijzig.setOnClickListener(v->{Tafel t=eerste(); if(t!=null)tafelDialoog(t,false);}); Button dup=knop("Dupliceer",Color.WHITE,DARK_GREEN); dup.setOnClickListener(v->dupliceer()); m.addView(wijzig,gewicht()); m.addView(dup,gewicht()); p.addView(m); LinearLayout c=rij(); Button comb=knop("Combineer",ORANGE,Color.WHITE); comb.setOnClickListener(v->combineer()); Button split=knop("Splitsen",GREY,Color.WHITE); split.setOnClickListener(v->splits()); c.addView(comb,gewicht()); c.addView(split,gewicht()); p.addView(c); Button del=knop("Verwijder geselecteerd",DARK_RED,Color.WHITE); del.setOnClickListener(v->verwijderSelectie()); p.addView(del,vol()); content.addView(p,vol());}
-    private Button verplaats(String s,int dx,int dy){Button b=knop(s,Color.WHITE,DARK_GREEN); b.setOnClickListener(v->{for(String n:selectie){Tafel t=tafel(n); if(t!=null){t.x=klem(t.x+dx,5,95); t.y=klem(t.y+dy,8,95); snap(t);}} bewaarTafels(); render();}); return b;}
+    private TextView dash(String label, int value, int color) {
+        TextView v = text(value + "\n" + label, 13, color, true);
+        v.setGravity(Gravity.CENTER);
+        v.setMinHeight(dp(62));
+        v.setBackground(bg(Color.WHITE, color, 1, 8));
+        return v;
+    }
 
-    private void reserveringenScherm(){LinearLayout top=paneel(); top.addView(txt("Reserveringen vandaag",24,INK,true)); top.addView(txt("Op tijd gesorteerd. De app kiest automatisch een passende tafel.",14,Color.rgb(89,81,67),false)); Button add=knop("Reservering toevoegen",DARK_GREEN,Color.WHITE); add.setOnClickListener(v->resDialoog(new Res(),true)); top.addView(add,vol()); content.addView(top,vol()); Collections.sort(reserveringen,(a,b)->a.tijd.compareTo(b.tijd)); if(reserveringen.isEmpty()){content.addView(info("Geen reserveringen voor vandaag.",GREEN)); return;} for(Res r:reserveringen){LinearLayout p=paneel(); int kleur=resKleur(r.status); p.setBackground(bg(Color.WHITE,kleur,1,8)); p.addView(txt(r.tijd+"  "+r.naam,20,INK,true)); p.addView(txt(r.personen+" personen - "+voorkeur(r.voorkeur)+" - "+r.status,15,kleur,true)); p.addView(txt("Tafel: "+(r.toewijzing.isEmpty()?"nog geen tafel":r.toewijzing),15,INK,false)); if(!r.advies.isEmpty())p.addView(txt(r.advies,15,DARK_RED,true)); if(!r.notitie.isEmpty())p.addView(txt("Notitie: "+r.notitie,14,Color.rgb(82,76,65),false)); LinearLayout x=rij(); Button plaats=knop("Plaats gast",GREEN,Color.WHITE); plaats.setOnClickListener(v->plaats(r)); Button tafel=knop("Wijzig tafel",BLUE,Color.WHITE); tafel.setOnClickListener(v->kiesTafel(r)); x.addView(plaats,gewicht()); x.addView(tafel,gewicht()); p.addView(x); LinearLayout y=rij(); Button edit=knop("Notitie / wijzig",Color.WHITE,DARK_GREEN); edit.setOnClickListener(v->resDialoog(r,false)); Button ann=knop("Annuleer",GREY,Color.WHITE); ann.setOnClickListener(v->{r.status="Geannuleerd"; losRes(r.id); bewaarAlles(); render();}); Button no=knop("No-show",DARK_RED,Color.WHITE); no.setOnClickListener(v->{r.status="No-show"; losRes(r.id); bewaarAlles(); render();}); y.addView(edit,gewicht()); y.addView(ann,gewicht()); y.addView(no,gewicht()); p.addView(y); content.addView(p,vol());}}
-    private void resDialoog(Res r,boolean nieuw){LinearLayout box=kolom(); box.setPadding(dp(8),0,dp(8),0); EditText naam=veld("Naam gast",r.naam), tijd=veld("Tijd",r.tijd.isEmpty()?rond():r.tijd), pers=veld("Aantal personen",r.personen>0?""+r.personen:""); pers.setInputType(InputType.TYPE_CLASS_NUMBER); Spinner pref=spinner(new String[]{"Geen voorkeur","Binnen","Tuin"},r.voorkeur.isEmpty()?"Geen voorkeur":r.voorkeur); Spinner status=spinner(new String[]{"Verwacht","Geplaatst","Geannuleerd","No-show"},r.status.isEmpty()?"Verwacht":r.status); EditText noot=veld("Notitie",r.notitie); box.addView(naam); box.addView(tijd); box.addView(pers); box.addView(txt("Voorkeur",14,INK,true)); box.addView(pref); box.addView(txt("Status",14,INK,true)); box.addView(status); box.addView(noot); new AlertDialog.Builder(this).setTitle(nieuw?"Reservering toevoegen":"Reservering wijzigen").setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{r.naam=waarde(naam,"Gast"); r.tijd=normaliseerTijd(tijd.getText().toString(),rond()); r.personen=Math.max(1,getal(pers,Math.max(1,r.personen))); r.voorkeur=pref.getSelectedItem().toString(); r.status=status.getSelectedItem().toString(); r.notitie=noot.getText().toString().trim(); if(nieuw)reserveringen.add(r); wijsToe(r,true); bewaarAlles(); render();}).show();}
-    private void kiesTafel(Res r){ArrayList<Kandidaat> lijst=kandidaten(r.personen,r.voorkeur,true); ArrayList<String> labels=new ArrayList<>(); labels.add("Geen tafel"); for(Kandidaat k:lijst)labels.add(k.label); Spinner sp=spinner(labels.toArray(new String[0]),"Geen tafel"); new AlertDialog.Builder(this).setTitle("Tafel wijzigen").setView(sp).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{losRes(r.id); r.tafels.clear(); String s=sp.getSelectedItem().toString(); if("Geen tafel".equals(s)){r.toewijzing=""; r.advies="Geen passende tafel gekoppeld.";} else for(Kandidaat k:lijst)if(k.label.equals(s))pasToe(r,k,true); bewaarAlles(); render();}).show();}
-    private void plaats(Res r){if(r.tafels.isEmpty())wijsToe(r,true); r.status="Geplaatst"; for(String n:r.tafels){Tafel t=tafel(n); if(t!=null){t.status=Status.BEZET; t.gast=r.naam; t.personen=r.personen; t.tijd=r.tijd; t.notitie=r.notitie; t.resId=r.id;}} bewaarAlles(); render();}
+    private HorizontalScrollView timeline() {
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout line = row();
+        line.setPadding(0, dp(2), 0, dp(2));
+        Button minus = smallButton("-30", DARK_GREEN, Color.WHITE);
+        minus.setOnClickListener(v -> { selectedTime = selectedTime.minusMinutes(30); render(); });
+        line.addView(minus, fixed(64, 48));
+        for (int h = 12; h <= 22; h++) {
+            String t = String.format(Locale.ROOT, "%02d:00", h);
+            boolean on = selectedTime.getHour() == h;
+            Button b = smallButton(t, on ? ORANGE : Color.WHITE, on ? Color.WHITE : DARK_GREEN);
+            final int hour = h;
+            b.setOnClickListener(v -> { selectedTime = LocalTime.of(hour, 0); render(); });
+            line.addView(b, fixed(80, 48));
+        }
+        Button plus = smallButton("+30", DARK_GREEN, Color.WHITE);
+        plus.setOnClickListener(v -> { selectedTime = selectedTime.plusMinutes(30); render(); });
+        line.addView(plus, fixed(64, 48));
+        hsv.addView(line);
+        return hsv;
+    }
 
-    private void beschikbaarScherm(){LinearLayout p=paneel(); p.addView(txt("Beschikbaarheid",24,INK,true)); p.addView(stapper("Aantal personen",vraag,n->{vraag=Math.max(1,n); render();})); p.addView(txt("Vrije tafels binnen: "+tel("Binnen",Status.VRIJ),17,GREEN,true)); p.addView(txt("Vrije tafels buiten: "+tel("Tuin",Status.VRIJ),17,GREEN,true)); p.addView(txt("Bijna vrij: "+tel(Status.BIJNA)+" tafel(s)",17,ORANGE,true)); p.addView(txt("Plaatsbaar binnen: "+capaciteit("Binnen",Status.VRIJ)+" personen",16,INK,false)); p.addView(txt("Plaatsbaar buiten: "+capaciteit("Tuin",Status.VRIJ)+" personen",16,INK,false)); TextView advies=txt(telefoonAdvies(),19,Color.WHITE,true); advies.setPadding(dp(14),dp(14),dp(14),dp(14)); advies.setBackground(bg(DARK_GREEN,DARK_GREEN,0,10)); p.addView(gap(8)); p.addView(advies); content.addView(p,vol()); LinearLayout comb=paneel(); comb.addView(txt("Mogelijke combinaties",20,INK,true)); ArrayList<Kandidaat> cs=combiKandidaten(vraag,"Geen voorkeur"); if(cs.isEmpty())comb.addView(txt("Geen directe combinatie nodig of mogelijk.",15,Color.rgb(82,76,65),false)); else for(Kandidaat k:cs)comb.addView(txt(k.label+" - "+k.capaciteit+" personen",16,ORANGE,true)); content.addView(comb,vol()); for(Tafel t:tafels)if(t.status==Status.VRIJ||t.status==Status.BIJNA){TextView v=txt("Tafel "+t.nr+" - "+zoneLabel(t.zone)+" - "+t.cap+" personen - "+status(t.status),16,INK,false); v.setPadding(dp(12),dp(10),dp(12),dp(10)); v.setBackground(bg(Color.WHITE,statusKleur(t.status),1,8)); v.setOnClickListener(x->service(t)); content.addView(v,vol());}}
-    private void risicoScherm(){Risico r=risico(); int kleur=r.level==2?DARK_RED:r.level==1?ORANGE:GREEN; TextView top=txt(r.titel,23,Color.WHITE,true); top.setGravity(Gravity.CENTER); top.setPadding(dp(14),dp(16),dp(14),dp(16)); top.setBackground(bg(kleur,kleur,0,10)); content.addView(top,vol()); LinearLayout p=paneel(); p.addView(stapper("Medewerkers bediening",bediening,n->{bediening=Math.max(1,n); bewaarSettings(); render();})); p.addView(stapper("Keukenmedewerkers",keuken,n->{keuken=Math.max(1,n); bewaarSettings(); render();})); p.addView(keuze("Keukencapaciteit",new String[]{"Laag","Normaal","Hoog"},keukenCap,s->{keukenCap=s; bewaarSettings(); render();})); p.addView(keuze("Drukteverwachting",new String[]{"Rustig","Normaal","Druk","Extreem druk"},drukte,s->{drukte=s; bewaarSettings(); render();})); content.addView(p,vol()); for(String s:r.regels)content.addView(info(s,kleur)); tijdlijn();}
-    private void tijdlijn(){LinearLayout p=paneel(); p.addView(txt("Dagtijdlijn",22,INK,true)); HashMap<String,Integer> per=new HashMap<>(); for(Res r:reserveringen)if("Verwacht".equals(r.status)||"Geplaatst".equals(r.status))per.put(r.tijd,per.containsKey(r.tijd)?per.get(r.tijd)+1:1); for(Res r:reserveringen){int n=per.containsKey(r.tijd)?per.get(r.tijd):0; int kleur=n>=4?DARK_RED:n>=3?ORANGE:resKleur(r.status); TextView v=txt(r.tijd+"  "+r.naam+"  tafel "+(r.toewijzing.isEmpty()?"?":r.toewijzing)+"  "+r.status+(n>=3?" - piekmoment":""),15,INK,false); v.setPadding(dp(10),dp(9),dp(10),dp(9)); v.setBackground(bg(Color.WHITE,kleur,1,8)); p.addView(v,vol());} if(reserveringen.isEmpty())p.addView(txt("Geen reserveringen op de tijdlijn.",15,Color.rgb(82,76,65),false)); content.addView(p,vol());}
-    private void instellingenScherm(){LinearLayout p=paneel(); p.addView(txt("Instellingen",24,INK,true)); p.addView(txt("Lokale gegevens blijven bewaard na opnieuw openen.",14,Color.rgb(82,76,65),false)); p.addView(txt("Openingstijden: "+opening,16,DARK_GREEN,true)); p.addView(stapper("Gemiddelde tafelduur",tafelduur,n->{tafelduur=klem(n,30,240); bewaarSettings(); render();})); p.addView(txt("Zones: Binnen en Tuin / buitenterras",16,DARK_GREEN,true)); content.addView(p,vol()); content.addView(instelKnop("Reset demo-data",WARM,()->reset(true)),vol()); content.addView(instelKnop("Reset plattegrond",ORANGE,()->{tafels.clear(); seed(); selectie.clear(); bewaarTafels(); render();}),vol()); content.addView(instelKnop("Alle reserveringen vandaag wissen",GREY,()->{reserveringen.clear(); for(Tafel t:tafels)if(!t.resId.isEmpty())t.clearGast(); bewaarAlles(); render();}),vol());}
-    private Button instelKnop(String s,int kleur,Runnable r){Button b=knop(s,kleur,Color.WHITE); b.setOnClickListener(v->new AlertDialog.Builder(this).setTitle(s).setMessage("Weet je het zeker?").setNegativeButton("Terug",null).setPositiveButton("Ja",(d,w)->r.run()).show()); return b;}
+    private LinearLayout navigation() {
+        LinearLayout box = column();
+        LinearLayout tabs = row();
+        tabs.addView(tab("Plattegrond", "map"), weight());
+        tabs.addView(tab("Reserveringen", "res"), weight());
+        tabs.addView(tab("Telefoon", "phone"), weight());
+        LinearLayout tabs2 = row();
+        tabs2.addView(tab("Risico", "risk"), weight());
+        tabs2.addView(tab("Instellingen", "settings"), weight());
+        box.addView(tabs); box.addView(tabs2);
+        return box;
+    }
 
-    private void service(Tafel basis){ArrayList<Tafel> groep=groep(basis); LinearLayout box=kolom(); box.setPadding(dp(8),0,dp(8),0); box.addView(txt(groep.size()>1?"Combinatie "+groepNaam(groep):"Tafel "+basis.nr,22,INK,true)); box.addView(txt(groepCap(groep)+" personen - "+status(basis.status),15,statusKleur(basis.status),true)); EditText gast=veld("Gastnaam",basis.gast), pers=veld("Personen",basis.personen>0?""+basis.personen:""), tijd=veld("Tijd",basis.tijd), note=veld("Notitie",basis.notitie); pers.setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(gast); box.addView(pers); box.addView(tijd); box.addView(note); actie(box,"Reservering koppelen",BLUE,()->koppelRes(basis)); actie(box,"Walk-in plaatsen",GREEN,()->{gastData(groep,gast,pers,tijd,note); zet(groep,Status.BEZET); if(tijd.getText().toString().trim().isEmpty())for(Tafel t:groep)t.tijd=nu(); bewaarTafels(); render();}); actie(box,"Gast geplaatst",GREEN,()->{gastData(groep,gast,pers,tijd,note); zet(groep,Status.BEZET); bewaarTafels(); render();}); actie(box,"Rekening",BLUE,()->{gastData(groep,gast,pers,tijd,note); zet(groep,Status.REKENING); bewaarTafels(); render();}); actie(box,"Bijna vrij",ORANGE,()->{gastData(groep,gast,pers,tijd,note); zet(groep,Status.BIJNA); bewaarTafels(); render();}); actie(box,"Vrijmaken",GREEN,()->{for(Tafel t:groep)t.clear(); bewaarTafels(); render();}); actie(box,"Blokkeren",GREY,()->{gastData(groep,gast,pers,tijd,note); zet(groep,Status.GEBLOKKEERD); bewaarTafels(); render();}); actie(box,"Annuleren",DARK_RED,()->{for(Tafel t:groep)t.clear(); bewaarTafels(); render();}); new AlertDialog.Builder(this).setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,w)->{gastData(groep,gast,pers,tijd,note); bewaarTafels(); render();}).show();}
-    private void actie(LinearLayout box,String s,int kleur,Runnable r){Button b=knop(s,kleur,Color.WHITE); b.setOnClickListener(v->r.run()); box.addView(b,vol());}
-    private void koppelRes(Tafel t){ArrayList<Res> lijst=new ArrayList<>(); ArrayList<String> labels=new ArrayList<>(); labels.add("Geen reservering"); for(Res r:reserveringen)if("Verwacht".equals(r.status)){lijst.add(r); labels.add(r.tijd+" - "+r.naam+" ("+r.personen+")");} Spinner sp=spinner(labels.toArray(new String[0]),"Geen reservering"); new AlertDialog.Builder(this).setTitle("Reservering koppelen").setView(sp).setNegativeButton("Terug",null).setPositiveButton("Koppelen",(d,w)->{int i=sp.getSelectedItemPosition()-1; if(i>=0&&i<lijst.size()){Res r=lijst.get(i); losRes(r.id); Kandidaat k=new Kandidaat("Tafel "+t.nr,t.zone,t.cap); for(Tafel x:groep(t))k.namen.add(x.nr); pasToe(r,k,false); bewaarAlles(); render();}}).show();}
-    private void tafelDialoog(Tafel t,boolean nieuw){LinearLayout box=kolom(); box.setPadding(dp(8),0,dp(8),0); EditText nr=veld("Tafelnummer",t.nr), cap=veld("Aantal personen",""+t.cap), w=veld("Breedte",""+t.breed), h=veld("Hoogte",""+t.hoog); cap.setInputType(InputType.TYPE_CLASS_NUMBER); w.setInputType(InputType.TYPE_CLASS_NUMBER); h.setInputType(InputType.TYPE_CLASS_NUMBER); Spinner vorm=spinner(new String[]{"Vierkant","Rechthoek","Rond"},t.vorm), z=spinner(new String[]{"Binnen","Tuin"},t.zone); box.addView(nr); box.addView(cap); box.addView(w); box.addView(h); box.addView(txt("Vorm",14,INK,true)); box.addView(vorm); box.addView(txt("Zone",14,INK,true)); box.addView(z); AlertDialog.Builder b=new AlertDialog.Builder(this).setTitle(nieuw?"Tafel toevoegen":"Tafel wijzigen").setView(box).setNegativeButton("Terug",null).setPositiveButton("Opslaan",(d,which)->{String oud=t.nr; t.nr=waarde(nr,"Nieuw"); t.cap=Math.max(1,getal(cap,t.cap)); t.breed=klem(getal(w,t.breed),10,30); t.hoog=klem(getal(h,t.hoog),10,30); t.vorm=vorm.getSelectedItem().toString(); t.zone=z.getSelectedItem().toString(); snap(t); if(nieuw)tafels.add(t); hernoem(oud,t.nr); selectie.clear(); selectie.add(t.nr); bewaarAlles(); render();}); if(!nieuw)b.setNeutralButton("Verwijderen",(d,wc)->{tafels.remove(t); selectie.remove(t.nr); bewaarAlles(); render();}); b.show();}
+    private Button tab(String label, String target) {
+        boolean on = screen.equals(target);
+        Button b = button(label, on ? DARK_GREEN : Color.WHITE, on ? Color.WHITE : DARK_GREEN);
+        b.setOnClickListener(v -> { screen = target; selectedTableIds.clear(); render(); });
+        return b;
+    }
 
-    private class Plan extends View{Paint p=new Paint(Paint.ANTI_ALIAS_FLAG); Tafel drag; boolean moved; float sx,sy; Plan(Context c){super(c);} protected void onDraw(Canvas c){p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255,253,247)); c.drawRect(0,0,getWidth(),getHeight(),p); grid(c); combis(c); for(Tafel t:tafels)if(zichtbaar(t))tekenTafel(c,t);} private void grid(Canvas c){p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(1)); p.setColor(Color.rgb(236,229,211)); for(int x=5;x<100;x+=5){float px=x*getWidth()/100f; c.drawLine(px,dp(42),px,getHeight()-dp(18),p);} for(int y=10;y<100;y+=5){float py=y*getHeight()/100f; c.drawLine(dp(10),py,getWidth()-dp(10),py,p);} p.setStrokeWidth(dp(2)); p.setColor(LINE); c.drawRoundRect(dp(8),dp(8),getWidth()-dp(8),getHeight()-dp(8),dp(14),dp(14),p); p.setStyle(Paint.Style.FILL); p.setColor(DARK_GREEN); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(15)); c.drawText("Alles".equals(zone)?"Binnen en Tuin / buitenterras":zoneLabel(zone),dp(18),dp(31),p);} private void combis(Canvas c){HashSet<String> done=new HashSet<>(); for(Tafel t:tafels)if(!t.combi.isEmpty()&&!done.contains(t.combi)&&zichtbaar(t)){done.add(t.combi); RectF b=null; for(Tafel x:groep(t))if(zichtbaar(x)){RectF r=rect(x); if(b==null)b=new RectF(r); else b.union(r);} if(b!=null){b.inset(-dp(8),-dp(8)); p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255,243,222)); c.drawRoundRect(b,dp(12),dp(12),p); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(3)); p.setColor(ORANGE); c.drawRoundRect(b,dp(12),dp(12),p);}}} private void tekenTafel(Canvas c,Tafel t){RectF r=rect(t); int kleur=isRisico(t)?DARK_RED:statusKleur(t.status); p.setStyle(Paint.Style.FILL); p.setColor(kleur); if("Rond".equals(t.vorm))c.drawOval(r,p); else c.drawRoundRect(r,dp(7),dp(7),p); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(selectie.contains(t.nr)?dp(5):dp(2)); p.setColor(selectie.contains(t.nr)?WARM:Color.WHITE); if("Rond".equals(t.vorm))c.drawOval(r,p); else c.drawRoundRect(r,dp(7),dp(7),p); p.setStyle(Paint.Style.FILL); p.setTextAlign(Paint.Align.CENTER); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(t.nr.length()>3?12:16)); p.setColor(Color.WHITE); c.drawText(t.nr,r.centerX(),r.centerY()+dp(5),p); if(!t.gast.isEmpty()||!t.tijd.isEmpty()||t.status==Status.REKENING||t.status==Status.BIJNA||isRisico(t)){p.setTextSize(dp(10)); String s=!t.gast.isEmpty()?t.gast:status(t.status); if(s.length()>12)s=s.substring(0,12); c.drawText(s,r.centerX(),r.bottom+dp(13),p); if(!t.tijd.isEmpty())c.drawText(t.tijd,r.centerX(),r.bottom+dp(25),p);} p.setTextAlign(Paint.Align.LEFT);} public boolean onTouchEvent(MotionEvent e){Tafel h=hit(e.getX(),e.getY()); if(e.getAction()==MotionEvent.ACTION_DOWN){drag=h; moved=false; sx=e.getX(); sy=e.getY(); return h!=null;} if(e.getAction()==MotionEvent.ACTION_MOVE&&bewerken&&drag!=null){if(Math.abs(e.getX()-sx)>dp(5)||Math.abs(e.getY()-sy)>dp(5))moved=true; drag.x=klem(Math.round(e.getX()*100f/Math.max(1,getWidth())),5,95); drag.y=klem(Math.round(e.getY()*100f/Math.max(1,getHeight())),8,95); snap(drag); invalidate(); return true;} if(e.getAction()==MotionEvent.ACTION_UP&&drag!=null){Tafel t=drag; drag=null; if(bewerken){if(!moved){if(selectie.contains(t.nr))selectie.remove(t.nr); else selectie.add(t.nr);} bewaarTafels(); render();} else service(t); return true;} return true;} private RectF rect(Tafel t){float cx=t.x*getWidth()/100f,cy=t.y*getHeight()/100f; return new RectF(cx-dp(t.breed),cy-dp(t.hoog),cx+dp(t.breed),cy+dp(t.hoog));} private Tafel hit(float x,float y){for(int i=tafels.size()-1;i>=0;i--){Tafel t=tafels.get(i); if(!zichtbaar(t))continue; RectF r=rect(t); r.inset(-dp(10),-dp(10)); if(r.contains(x,y))return t;} return null;}}
+    private void renderMap() {
+        LinearLayout zoneLine = row();
+        zoneLine.addView(zoneButton("Alles"), weight());
+        zoneLine.addView(zoneButton("Binnen"), weight());
+        zoneLine.addView(zoneButton("Tuin"), weight());
+        zoneLine.addView(zoneButton("Buitenterras"), weight());
+        content.addView(zoneLine);
 
-    private void wijsToe(Res r,boolean maakCombi){if("Geannuleerd".equals(r.status)||"No-show".equals(r.status))return; losRes(r.id); ArrayList<Kandidaat> ks=kandidaten(r.personen,r.voorkeur,maakCombi); Kandidaat exact=null, klein=null; for(Kandidaat k:ks){if(k.capaciteit<r.personen)continue; if(exact==null&&k.capaciteit==r.personen)exact=k; if(klein==null||k.capaciteit<klein.capaciteit)klein=k;} if(exact!=null)pasToe(r,exact,maakCombi); else if(klein!=null)pasToe(r,klein,maakCombi); else {r.toewijzing=""; r.tafels.clear(); r.advies=beschikbaarAdvies(r.personen,r.voorkeur);}}
-    private void pasToe(Res r,Kandidaat k,boolean maakCombi){r.tafels.clear(); r.tafels.addAll(k.namen); r.toewijzing=zonderVoorvoegsel(k.label); r.advies=k.advies; if(k.namen.size()>1&&maakCombi){String id="combi-"+UUID.randomUUID(); for(String n:k.namen){Tafel t=tafel(n); if(t!=null)t.combi=id;}} for(String n:k.namen){Tafel t=tafel(n); if(t!=null){t.gast=r.naam; t.personen=r.personen; t.tijd=r.tijd; t.notitie=r.notitie; t.resId=r.id; if(!"Geplaatst".equals(r.status))t.status=Status.VERWACHT;}}}
-    private ArrayList<Kandidaat> kandidaten(int personen,String pref,boolean combis){ArrayList<Kandidaat> out=new ArrayList<>(); HashSet<String> gezien=new HashSet<>(); for(Tafel t:tafels){if(!zoneOk(t.zone,pref)||!vrijVoorRes(t))continue; if(!t.combi.isEmpty()){if(gezien.contains(t.combi))continue; gezien.add(t.combi); ArrayList<Tafel> g=groep(t); Kandidaat k=new Kandidaat("Combinatie "+groepNaam(g),t.zone,groepCap(g)); for(Tafel x:g)k.namen.add(x.nr); k.advies="Combinatie staat klaar."; out.add(k);} else {Kandidaat k=new Kandidaat("Tafel "+t.nr,t.zone,t.cap); k.namen.add(t.nr); k.advies="Passende tafel gekoppeld."; out.add(k);}} if(combis&&personen>4)out.addAll(combiKandidaten(personen,pref)); Collections.sort(out,(a,b)->a.capaciteit!=b.capaciteit?a.capaciteit-b.capaciteit:a.label.compareTo(b.label)); return out;}
-    private ArrayList<Kandidaat> combiKandidaten(int personen,String pref){ArrayList<Kandidaat> out=new ArrayList<>(); ArrayList<Tafel> vrij=new ArrayList<>(); for(Tafel t:tafels)if(t.combi.isEmpty()&&vrijVoorRes(t)&&zoneOk(t.zone,pref))vrij.add(t); for(int i=0;i<vrij.size();i++)for(int j=i+1;j<vrij.size();j++){Tafel a=vrij.get(i),b=vrij.get(j); if(!a.zone.equals(b.zone))continue; int cap=a.cap+b.cap; if(cap>=personen&&Math.abs(a.x-b.x)<=20&&Math.abs(a.y-b.y)<=20){Kandidaat k=new Kandidaat("Combinatie "+a.nr+" + "+b.nr,a.zone,cap); k.namen.add(a.nr); k.namen.add(b.nr); k.advies="Advies: combineer tafel "+a.nr+" + "+b.nr+"."; out.add(k);}} Collections.sort(out,(a,b)->a.capaciteit-b.capaciteit); return out;}
-    private Risico risico(){Risico r=new Risico(); int score=0, bezet=tel(Status.BEZET)+tel(Status.LAAT), gasten=gasten(), bijna=tel(Status.BIJNA), rekening=tel(Status.REKENING), piek=resBinnenkort(); if(bezet>=18){score+=2;r.regels.add("Neem tijdelijk minder walk-ins aan");} else if(bezet>=12){score++;r.regels.add("Veel bezette tafels. Werk per zone.");} if(bijna>=5){score++;r.regels.add("Zet iemand op afruimen en indekken.");} if(rekening>=4){score++;r.regels.add("Versnel afrekenen bij tafels op rekening.");} if(piek>=4){score+=2;r.regels.add("Laat keuken weten dat piek eraan komt.");} else if(piek>=2){score++;r.regels.add("Houd reserveringstafels vrij.");} if(gasten/Math.max(1,bediening)>22){score+=2;r.regels.add("Zet extra bediening op terras.");} int lim="Hoog".equals(keukenCap)?24:"Laag".equals(keukenCap)?12:18; if(gasten/Math.max(1,keuken)>lim){score+=2;r.regels.add("Beperk grote groepen tijdelijk.");} if("Druk".equals(drukte))score++; if("Extreem druk".equals(drukte)){score+=2;r.regels.add("Plan reserveringen meer gespreid.");} if(r.regels.isEmpty()){r.regels.add("Rustig beeld. Service is haalbaar."); r.regels.add("Blijf bijna-vrije tafels actief volgen.");} r.level=score>=5?2:score>=2?1:0; r.titel=r.level==2?"Rood: risico op vertraging":r.level==1?"Oranje: opletten":"Groen: haalbaar"; return r;}
+        LinearLayout modeLine = row();
+        Button service = button("Service", serviceMode ? DARK_GREEN : Color.WHITE, serviceMode ? Color.WHITE : DARK_GREEN);
+        service.setOnClickListener(v -> { serviceMode = true; selectedTableIds.clear(); render(); });
+        Button edit = button("Bewerk", !serviceMode ? ORANGE : Color.WHITE, !serviceMode ? Color.WHITE : DARK_GREEN);
+        edit.setOnClickListener(v -> { serviceMode = false; selectedTableIds.clear(); render(); });
+        modeLine.addView(service, weight()); modeLine.addView(edit, weight());
+        content.addView(modeLine);
 
-    private void laad(){laadSettings(); laadTafels(); laadRes();} private void laadTafels(){tafels.clear(); try{JSONArray a=new JSONArray(prefs.getString(K_T,"")); for(int i=0;i<a.length();i++)tafels.add(Tafel.from(a.getJSONObject(i)));}catch(Exception e){tafels.clear();} if(tafels.isEmpty()){seed(); bewaarTafels();}} private void laadRes(){reserveringen.clear(); try{JSONArray a=new JSONArray(prefs.getString(K_R,"")); for(int i=0;i<a.length();i++)reserveringen.add(Res.from(a.getJSONObject(i)));}catch(Exception ignored){}} private void laadSettings(){try{JSONObject j=new JSONObject(prefs.getString(K_S,"{}")); bediening=j.optInt("bediening",3); keuken=j.optInt("keuken",2); keukenCap=j.optString("keukencapaciteit","Normaal"); drukte=j.optString("drukte","Normaal"); opening=j.optString("opening","17:00 - 22:00"); tafelduur=j.optInt("tafelduur",120);}catch(Exception ignored){}}
-    private void bewaarTafels(){JSONArray a=new JSONArray(); for(Tafel t:tafels)a.put(t.json()); prefs.edit().putString(K_T,a.toString()).apply();} private void bewaarRes(){JSONArray a=new JSONArray(); for(Res r:reserveringen)a.put(r.json()); prefs.edit().putString(K_R,a.toString()).apply();} private void bewaarSettings(){JSONObject j=new JSONObject(); try{j.put("bediening",bediening); j.put("keuken",keuken); j.put("keukencapaciteit",keukenCap); j.put("drukte",drukte); j.put("opening",opening); j.put("tafelduur",tafelduur);}catch(Exception ignored){} prefs.edit().putString(K_S,j.toString()).apply();} private void bewaarAlles(){bewaarTafels(); bewaarRes(); bewaarSettings();}
-    private void reset(boolean demo){tafels.clear(); reserveringen.clear(); selectie.clear(); seed(); if(demo){reserveringen.add(new Res("Jansen","18:00",2,"Binnen","Kinderstoel")); reserveringen.add(new Res("De Vries","18:30",4,"Tuin","")); reserveringen.add(new Res("Bakker","19:00",6,"Geen voorkeur","Verjaardag")); reserveringen.add(new Res("Smit","19:00",2,"Binnen","")); reserveringen.add(new Res("Koster","19:15",4,"Tuin",""));} autoReserveringen(); bewaarAlles(); render();}
-    private void seed(){String[] binnen={"1","2","3","3b","4","5","5b","6","7","8","9","10","11","12","13","14","15","16"}; int[][] pi={{14,15},{30,15},{47,15},{63,15},{81,15},{16,34},{34,34},{52,34},{72,34},{18,54},{36,54},{54,54},{75,54},{16,75},{34,75},{52,75},{70,75},{86,75}}; for(int i=0;i<binnen.length;i++){boolean s=binnen[i].contains("b"); tafels.add(new Tafel(binnen[i],"Binnen",pi[i][0],pi[i][1],s?13:15,s?13:15,s?"Rond":"Vierkant",s?2:4));} String[] tuin={"40","41","41-1","42","43","43-2","44","45","46","47","47-2","48","49","49-2","50","51","52","53","53-2","54","54-2","55","56","57","58"}; int[][] po={{11,14},{26,14},{41,14},{57,14},{75,14},{90,14},{12,31},{29,31},{46,31},{64,31},{82,31},{13,49},{32,49},{49,49},{67,49},{85,49},{13,68},{31,68},{48,68},{66,68},{84,68},{20,86},{42,86},{64,86},{86,86}}; for(int i=0;i<tuin.length;i++){boolean s=tuin[i].contains("-"); tafels.add(new Tafel(tuin[i],"Tuin",po[i][0],po[i][1],s?13:15,s?13:15,s?"Rond":"Vierkant",s?2:4));}}
+        TextView hint = text(serviceMode ? "Tik op een grote tafel voor snelle service-acties." : "Selecteer tafels. Sleep grof of gebruik de grote pijlen. Alles klikt vast op het raster.", 15, Color.rgb(83, 78, 66), false);
+        hint.setPadding(dp(4), dp(6), dp(4), dp(8));
+        content.addView(hint);
 
-    private boolean zichtbaar(Tafel t){if(!"Alles".equals(zone)&&!t.zone.equals(zone))return false; if("Alleen risico".equals(filter))return isRisico(t); if("Alleen rekening".equals(filter))return t.status==Status.REKENING; if("Alleen bijna vrij".equals(filter))return t.status==Status.BIJNA; return true;} private boolean isRisico(Tafel t){if(t.status==Status.LAAT||t.status==Status.RISICO)return true; if((t.status==Status.BEZET||t.status==Status.REKENING)&&sinds(t.tijd)>=tafelduur+20)return true; if(t.status==Status.VERWACHT){long m=tot(t.tijd); return m<=15&&m>=-10;} return false;} private boolean vrijVoorRes(Tafel t){return t.status==Status.VRIJ||(t.status==Status.VERWACHT&&t.resId.isEmpty());} private boolean zoneOk(String z,String pref){return pref==null||pref.isEmpty()||"Geen voorkeur".equals(pref)||z.equals(pref);} private String zoneLabel(String z){return "Tuin".equals(z)?"Tuin / buitenterras":z;} private String voorkeur(String p){return "Tuin".equals(p)?"tuin / buitenterras":p.toLowerCase(Locale.ROOT);} private String status(Status s){switch(s){case VRIJ:return"Vrij";case BEZET:return"Bezet";case BIJNA:return"Bijna vrij";case REKENING:return"Rekening";case GEBLOKKEERD:return"Geblokkeerd";case LAAT:return"Te laat";case RISICO:return"Risico";case VERWACHT:return"Verwacht";} return"Vrij";} private int statusKleur(Status s){switch(s){case VRIJ:return GREEN;case BEZET:return RED;case BIJNA:return ORANGE;case REKENING:return BLUE;case GEBLOKKEERD:return GREY;case LAAT:case RISICO:return DARK_RED;case VERWACHT:return WARM;} return GREEN;} private int resKleur(String s){if("Geplaatst".equals(s))return GREEN; if("Geannuleerd".equals(s))return GREY; if("No-show".equals(s))return DARK_RED; return WARM;}
-    private int tel(Status s){int n=0; for(Tafel t:tafels)if(t.status==s)n++; return n;} private int tel(String z,Status s){int n=0; for(Tafel t:tafels)if(t.zone.equals(z)&&t.status==s)n++; return n;} private int letOp(){int n=0; for(Tafel t:tafels)if(isRisico(t))n++; return n;} private int capaciteit(String z,Status s){int n=0; for(Tafel t:tafels)if(t.zone.equals(z)&&t.status==s)n+=t.cap; return n;} private boolean heeftVrij(String z,int p){for(Tafel t:tafels)if(t.zone.equals(z)&&t.status==Status.VRIJ&&t.cap>=p)return true; return false;} private boolean heeftBijna(String z,int p){for(Tafel t:tafels)if(t.zone.equals(z)&&t.status==Status.BIJNA&&t.cap>=p)return true; return false;} private int gasten(){int n=0; HashSet<String> gezien=new HashSet<>(); for(Tafel t:tafels)if(t.status==Status.BEZET||t.status==Status.BIJNA||t.status==Status.REKENING||t.status==Status.LAAT){if(!t.combi.isEmpty()){if(gezien.contains(t.combi))continue; gezien.add(t.combi); n+=Math.max(t.personen,groepCap(groep(t)));} else n+=Math.max(t.personen,t.cap);} return n;} private int resBinnenkort(){int n=0; for(Res r:reserveringen){long m=tot(r.tijd); if(m>=0&&m<=45&&"Verwacht".equals(r.status))n++;} return n;} private String telefoonAdvies(){if(heeftVrij("Binnen",vraag))return"Voor "+vraag+" personen hebben we nu plek binnen."; if(heeftVrij("Tuin",vraag))return"Voor "+vraag+" personen hebben we nu plek buiten."; if(heeftBijna("Binnen",vraag)||heeftBijna("Tuin",vraag))return"Voor "+vraag+" personen is plek mogelijk over ongeveer 20 minuten."; if(!combiKandidaten(vraag,"Geen voorkeur").isEmpty())return"Voor "+vraag+" personen kan een combinatie gemaakt worden."; return"Voor "+vraag+" personen adviseren we reserveren op later tijdstip.";} private String beschikbaarAdvies(int p,String pref){if(!"Tuin".equals(pref)&&heeftBijna("Binnen",p))return"Pas beschikbaar rond "+later(20)+" binnen."; if(!"Binnen".equals(pref)&&heeftBijna("Tuin",p))return"Alleen tuin beschikbaar rond "+later(20)+"."; if(resBinnenkort()>=4)return"Risico: te veel tafels tegelijk. Spreid reserveringen."; return"Geen passende tafel beschikbaar. Advies: later tijdstip voorstellen.";}
-    private ArrayList<Tafel> groep(Tafel t){ArrayList<Tafel> g=new ArrayList<>(); if(t.combi.isEmpty()){g.add(t); return g;} for(Tafel x:tafels)if(t.combi.equals(x.combi))g.add(x); return g;} private int groepCap(ArrayList<Tafel> g){int n=0; for(Tafel t:g)n+=t.cap; return n;} private String groepNaam(ArrayList<Tafel> g){ArrayList<String> ns=new ArrayList<>(); for(Tafel t:g)ns.add(t.nr); return join(ns);} private String join(ArrayList<String> ns){StringBuilder b=new StringBuilder(); for(int i=0;i<ns.size();i++){if(i>0)b.append(" + "); b.append(ns.get(i));} return b.toString();} private Tafel tafel(String nr){for(Tafel t:tafels)if(t.nr.equals(nr))return t; return null;} private Tafel eerste(){for(String n:selectie){Tafel t=tafel(n); if(t!=null)return t;} return null;} private void snap(Tafel t){t.x=klem(Math.round(t.x/5f)*5,5,95); t.y=klem(Math.round(t.y/5f)*5,8,95);} private void zet(ArrayList<Tafel> g,Status s){for(Tafel t:g)t.status=s;} private void gastData(ArrayList<Tafel> g,EditText gast,EditText pers,EditText tijd,EditText note){int p=getal(pers,0); String nm=gast.getText().toString().trim(), ti=normaliseerTijd(tijd.getText().toString(),""), no=note.getText().toString().trim(); for(Tafel t:g){t.gast=nm;t.personen=p;t.tijd=ti;t.notitie=no;}}
-    private void combineer(){if(selectie.size()<2){toast("Selecteer minimaal twee tafels"); return;} String id="combi-"+UUID.randomUUID(); for(String n:selectie){Tafel t=tafel(n); if(t!=null)t.combi=id;} bewaarTafels(); render();} private void splits(){for(String n:selectie){Tafel t=tafel(n); if(t!=null&&!t.combi.isEmpty()){String id=t.combi; for(Tafel x:tafels)if(id.equals(x.combi))x.combi="";}} bewaarTafels(); render();} private void dupliceer(){Tafel t=eerste(); if(t==null)return; Tafel c=t.copy(); int i=1; while(tafel(t.nr+"-"+i)!=null)i++; c.nr=t.nr+"-"+i; c.x=klem(c.x+5,5,95); c.y=klem(c.y+5,8,95); c.combi=""; c.clear(); tafels.add(c); selectie.clear(); selectie.add(c.nr); bewaarTafels(); render();} private void verwijderSelectie(){if(selectie.isEmpty())return; new AlertDialog.Builder(this).setTitle("Tafels verwijderen").setMessage("Verwijder geselecteerde tafels?").setNegativeButton("Terug",null).setPositiveButton("Verwijder",(d,w)->{ArrayList<Tafel> del=new ArrayList<>(); for(Tafel t:tafels)if(selectie.contains(t.nr))del.add(t); tafels.removeAll(del); selectie.clear(); bewaarAlles(); render();}).show();}
-    private void losRes(String id){if(id==null||id.isEmpty())return; for(Tafel t:tafels)if(id.equals(t.resId)){t.gast=""; t.personen=0; t.tijd=""; t.notitie=""; t.resId=""; if(t.status==Status.VERWACHT)t.status=Status.VRIJ;}} private void autoReserveringen(){boolean changed=false; for(Res r:reserveringen)if("Verwacht".equals(r.status)&&r.tafels.isEmpty()){wijsToe(r,true); changed=true;} if(changed)bewaarAlles();} private void hernoem(String oud,String nieuw){for(Res r:reserveringen){for(int i=0;i<r.tafels.size();i++)if(r.tafels.get(i).equals(oud))r.tafels.set(i,nieuw); if(!r.tafels.isEmpty())r.toewijzing=join(r.tafels);}} private String zonderVoorvoegsel(String s){return s.replace("Tafel ","").replace("Combinatie ","");}
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(bg(PAPER, LINE, 1, 10));
+        frame.addView(new FloorView(this), new FrameLayout.LayoutParams(-1, dp(620)));
+        content.addView(frame, full());
+        if (!serviceMode) editPanel();
+    }
 
-    private LinearLayout paneel(){LinearLayout p=kolom(); p.setPadding(dp(12),dp(12),dp(12),dp(12)); p.setBackground(bg(Color.WHITE,LINE,1,8)); return p;} private TextView info(String s,int c){TextView v=txt(s,16,INK,false); v.setPadding(dp(12),dp(10),dp(12),dp(10)); v.setBackground(bg(Color.WHITE,c,1,8)); return v;} private LinearLayout stapper(String title,int val,Num save){LinearLayout r=rij(); r.setGravity(Gravity.CENTER_VERTICAL); r.addView(txt(title,16,INK,true),new LinearLayout.LayoutParams(0,-2,1)); Button m=knop("-",Color.WHITE,DARK_GREEN), p=knop("+",Color.WHITE,DARK_GREEN); TextView n=txt(""+val,18,INK,true); n.setGravity(Gravity.CENTER); m.setOnClickListener(v->save.save(val-1)); p.setOnClickListener(v->save.save(val+1)); r.addView(m,klein()); r.addView(n,klein()); r.addView(p,klein()); return r;} private LinearLayout keuze(String title,String[] vals,String selected,TextSave save){LinearLayout b=kolom(); b.addView(txt(title,16,INK,true)); Spinner sp=spinner(vals,selected); sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> p,View v,int pos,long id){String s=vals[pos]; if(!s.equals(selected))save.save(s);} public void onNothingSelected(AdapterView<?> p){}}); b.addView(sp); return b;} private Spinner spinner(String[] vals,String selected){Spinner s=new Spinner(this); s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,vals)); for(int i=0;i<vals.length;i++)if(vals[i].equals(selected))s.setSelection(i); return s;}
-    private LinearLayout kolom(){LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l;} private LinearLayout rij(){LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); l.setBaselineAligned(false); return l;} private TextView txt(String s,int sp,int c,boolean bold){TextView v=new TextView(this); v.setText(s); v.setTextSize(sp); v.setTextColor(c); if(bold)v.setTypeface(Typeface.DEFAULT_BOLD); return v;} private TextView pil(String s,int c){TextView v=txt(s,13,Color.WHITE,true); v.setGravity(Gravity.CENTER); v.setPadding(dp(10),dp(7),dp(10),dp(7)); v.setBackground(bg(c,c,0,18)); return v;} private Button knop(String s,int bg,int fg){Button b=new Button(this); b.setText(s); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(Typeface.DEFAULT_BOLD); b.setTextColor(fg); b.setMinHeight(dp(48)); b.setPadding(dp(8),dp(4),dp(8),dp(4)); b.setBackground(bg(bg,bg==Color.WHITE?LINE:bg,1,8)); return b;} private EditText veld(String hint,String val){EditText e=new EditText(this); e.setHint(hint); e.setText(val); e.setTextSize(18); return e;} private GradientDrawable bg(int fill,int stroke,int sw,int radius){GradientDrawable g=new GradientDrawable(); g.setColor(fill); g.setCornerRadius(dp(radius)); if(sw>0)g.setStroke(dp(sw),stroke); return g;} private LinearLayout.LayoutParams gewicht(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p;} private LinearLayout.LayoutParams vol(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.setMargins(0,dp(4),0,dp(4)); return p;} private LinearLayout.LayoutParams klein(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(48),dp(48)); p.setMargins(dp(3),dp(3),dp(3),dp(3)); return p;} private View gap(int h){View v=new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1,dp(h))); return v;} private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);} private int klem(int v,int min,int max){return Math.max(min,Math.min(max,v));} private int getal(EditText e,int f){try{return Integer.parseInt(e.getText().toString().trim());}catch(Exception ex){return f;}} private String waarde(EditText e,String f){String s=e.getText().toString().trim(); return s.isEmpty()?f:s;} private String nu(){return LocalTime.now().format(TF);} private String rond(){LocalTime t=LocalTime.now(); int m=((t.getMinute()+14)/15)*15; return t.withMinute(0).withSecond(0).withNano(0).plusMinutes(m).format(TF);} private String later(int m){return LocalTime.now().plusMinutes(m).format(TF);} private String normaliseerTijd(String s,String fallback){String c=s.trim().replace('.',':'); try{if(c.contains(":")){String[] p=c.split(":"); return LocalTime.of(Integer.parseInt(p[0]),Integer.parseInt(p[1])).format(TF);} if(c.length()>0)return LocalTime.of(Integer.parseInt(c),0).format(TF);}catch(Exception ignored){} return fallback;} private long tot(String s){try{return ChronoUnit.MINUTES.between(LocalTime.now(),LocalTime.parse(s,TF));}catch(Exception e){return Long.MAX_VALUE;}} private long sinds(String s){try{return ChronoUnit.MINUTES.between(LocalTime.parse(s,TF),LocalTime.now());}catch(Exception e){return 0;}} private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_SHORT).show();}
+    private Button zoneButton(String z) {
+        boolean on = activeZone.equals(z);
+        Button b = button(z, on ? DARK_GREEN : Color.WHITE, on ? Color.WHITE : DARK_GREEN);
+        b.setTextSize(12);
+        b.setOnClickListener(v -> { activeZone = z; selectedTableIds.clear(); render(); });
+        return b;
+    }
 
-    enum Status{VRIJ,BEZET,BIJNA,REKENING,GEBLOKKEERD,LAAT,RISICO,VERWACHT; static Status from(String s){for(Status x:values())if(x.name().equals(s))return x; if("FREE".equals(s))return VRIJ; if("OCCUPIED".equals(s))return BEZET; if("SOON".equals(s)||"ALMOST_FREE".equals(s))return BIJNA; if("BILL".equals(s)||"BILL_REQUESTED".equals(s))return REKENING; if("BLOCKED".equals(s))return GEBLOKKEERD; return VRIJ;}}
-    static class Tafel{String nr,zone,vorm,gast="",tijd="",notitie="",combi="",resId=""; int x,y,breed,hoog,cap,personen; Status status=Status.VRIJ; Tafel(String n,String z,int x,int y,int b,int h,String v,int c){nr=n;zone=z;this.x=x;this.y=y;breed=b;hoog=h;vorm=v;cap=c;} Tafel copy(){Tafel t=new Tafel(nr,zone,x,y,breed,hoog,vorm,cap); t.personen=personen;t.status=status;t.gast=gast;t.tijd=tijd;t.notitie=notitie;t.combi=combi;t.resId=resId;return t;} void clear(){status=Status.VRIJ; clearGast();} void clearGast(){gast="";personen=0;tijd="";notitie="";resId="";} JSONObject json(){JSONObject j=new JSONObject(); try{j.put("nr",nr);j.put("zone",zone);j.put("x",x);j.put("y",y);j.put("breed",breed);j.put("hoog",hoog);j.put("vorm",vorm);j.put("cap",cap);j.put("personen",personen);j.put("status",status.name());j.put("gast",gast);j.put("tijd",tijd);j.put("notitie",notitie);j.put("combi",combi);j.put("resId",resId);}catch(Exception ignored){} return j;} static Tafel from(JSONObject j){int size=j.optInt("size",15); Tafel t=new Tafel(j.optString("nr",j.optString("name","?")),j.optString("zone","Binnen"),j.optInt("x",50),j.optInt("y",50),j.optInt("breed",j.optInt("width",size)),j.optInt("hoog",j.optInt("height",size)),j.optString("vorm",j.optString("shape","Vierkant")),j.optInt("cap",j.optInt("capacity",2))); t.personen=j.optInt("personen",j.optInt("party",0)); t.status=Status.from(j.optString("status","VRIJ")); t.gast=j.optString("gast",j.optString("guest","")); t.tijd=j.optString("tijd",j.optString("time","")); t.notitie=j.optString("notitie",j.optString("note","")); t.combi=j.optString("combi",j.optString("groupId","")); t.resId=j.optString("resId",j.optString("reservationId","")); return t;}}
-    static class Res{String id=UUID.randomUUID().toString(),naam="",tijd="",voorkeur="Geen voorkeur",notitie="",status="Verwacht",toewijzing="",advies=""; int personen=2; ArrayList<String> tafels=new ArrayList<>(); Res(){} Res(String n,String t,int p,String v,String no){naam=n;tijd=t;personen=p;voorkeur=v;notitie=no;} JSONObject json(){JSONObject j=new JSONObject(); try{j.put("id",id);j.put("naam",naam);j.put("tijd",tijd);j.put("personen",personen);j.put("voorkeur",voorkeur);j.put("notitie",notitie);j.put("status",status);j.put("toewijzing",toewijzing);j.put("advies",advies);JSONArray a=new JSONArray(); for(String s:tafels)a.put(s); j.put("tafels",a);}catch(Exception ignored){} return j;} static Res from(JSONObject j){Res r=new Res(); r.id=j.optString("id",UUID.randomUUID().toString()); r.naam=j.optString("naam",j.optString("guest","")); r.tijd=j.optString("tijd",j.optString("time","")); r.personen=j.optInt("personen",j.optInt("party",2)); r.voorkeur=j.optString("voorkeur",j.optString("preference","Geen voorkeur")); r.notitie=j.optString("notitie",j.optString("note","")); r.status=j.optString("status","Verwacht"); r.toewijzing=j.optString("toewijzing",j.optString("assignment","")); r.advies=j.optString("advies",j.optString("advice","")); JSONArray a=j.optJSONArray("tafels"); if(a==null)a=j.optJSONArray("tableNames"); if(a!=null)for(int i=0;i<a.length();i++)r.tafels.add(a.optString(i)); return r;}}
-    static class Kandidaat{String label,zone,advies=""; int capaciteit; ArrayList<String> namen=new ArrayList<>(); Kandidaat(String l,String z,int c){label=l;zone=z;capaciteit=c;}}
-    static class Risico{int level; String titel; ArrayList<String> regels=new ArrayList<>();}
-    interface Num{void save(int n);} interface TextSave{void save(String s);} 
+    private void editPanel() {
+        LinearLayout p = panel();
+        p.addView(text("Bewerk modus", 23, INK, true));
+        p.addView(text(selectedTableIds.isEmpty() ? "Geen tafel geselecteerd" : selectedTableIds.size() + " tafel(s) geselecteerd", 16, WARM, true));
+        LinearLayout a = row();
+        Button add = button("Tafel toevoegen", DARK_GREEN, Color.WHITE);
+        add.setOnClickListener(v -> editTable(new Table("t" + System.currentTimeMillis(), nextNumber(), zoneForNewTable(), 50, 50, 90, 80, "vierkant", 4), true));
+        Button save = button("Opslaan", BLUE, Color.WHITE);
+        save.setOnClickListener(v -> { saveTables(); toast("Plattegrond opgeslagen"); });
+        a.addView(add, weight()); a.addView(save, weight()); p.addView(a);
+        LinearLayout r1 = row(), r2 = row(), r3 = row();
+        r1.addView(moveButton("Omhoog", 0, -5), weight()); r1.addView(moveButton("Omlaag", 0, 5), weight());
+        r2.addView(moveButton("Links", -5, 0), weight()); r2.addView(moveButton("Rechts", 5, 0), weight());
+        r3.addView(sizeButton("Groter", 10), weight()); r3.addView(sizeButton("Kleiner", -10), weight());
+        p.addView(r1); p.addView(r2); p.addView(r3);
+        LinearLayout m = row();
+        Button change = button("Wijzig tafel", Color.WHITE, DARK_GREEN);
+        change.setOnClickListener(v -> { Table t = firstSelected(); if (t != null) editTable(t, false); });
+        Button del = button("Verwijder", DARK_GREY, Color.WHITE);
+        del.setOnClickListener(v -> deleteSelected());
+        m.addView(change, weight()); m.addView(del, weight()); p.addView(m);
+        LinearLayout c = row();
+        Button merge = button("Tafels samenvoegen", ORANGE, Color.WHITE);
+        merge.setOnClickListener(v -> mergeTables());
+        Button split = button("Samenvoeging losmaken", GREY, Color.WHITE);
+        split.setOnClickListener(v -> splitTables());
+        c.addView(merge, weight()); c.addView(split, weight()); p.addView(c);
+        Button standard = button("Groep opslaan als standaardopstelling", WARM, Color.WHITE);
+        standard.setOnClickListener(v -> { floorRevision++; saveSettings(); saveTables(); toast("Standaardopstelling opgeslagen"); });
+        p.addView(standard, full());
+        Button cancel = button("Annuleren", Color.WHITE, DARK_GREEN);
+        cancel.setOnClickListener(v -> { selectedTableIds.clear(); loadTables(); render(); });
+        p.addView(cancel, full());
+        content.addView(p, full());
+    }
+
+    private Button moveButton(String label, int dx, int dy) {
+        Button b = button(label, Color.WHITE, DARK_GREEN);
+        b.setOnClickListener(v -> { forSelected(t -> { t.x = clamp(t.x + dx, 5, 95); t.y = clamp(t.y + dy, 8, 95); snap(t); }); saveTables(); render(); });
+        return b;
+    }
+
+    private Button sizeButton(String label, int delta) {
+        Button b = button(label, Color.WHITE, DARK_GREEN);
+        b.setOnClickListener(v -> { forSelected(t -> { t.width = clamp(t.width + delta, 70, 180); t.height = clamp(t.height + delta, 70, 160); }); saveTables(); render(); });
+        return b;
+    }
+
+    private void renderReservations() {
+        LinearLayout top = panel();
+        top.addView(text("Reserveringen vandaag", 25, INK, true));
+        LinearLayout filters = row();
+        filters.addView(resFilter("Alles"), weight()); filters.addView(resFilter("Binnen"), weight()); filters.addView(resFilter("Tuin"), weight()); filters.addView(resFilter("Buitenterras"), weight());
+        top.addView(filters);
+        EditText search = field("Zoek op naam", searchText);
+        search.setSingleLine(true);
+        search.addTextChangedListener(new TextWatcher(){ public void beforeTextChanged(CharSequence s,int st,int c,int a){} public void onTextChanged(CharSequence s,int st,int b,int c){ searchText=s.toString(); } public void afterTextChanged(Editable e){} });
+        top.addView(search);
+        Button add = button("Reservering toevoegen", DARK_GREEN, Color.WHITE);
+        add.setOnClickListener(v -> reservationDialog(new Reservation(), true));
+        top.addView(add, full());
+        content.addView(top, full());
+
+        ArrayList<Reservation> list = new ArrayList<>(reservations);
+        Collections.sort(list, (a,b) -> (a.date + a.time).compareTo(b.date + b.time));
+        for (Reservation r : list) {
+            if (!r.date.equals(selectedDate.toString())) continue;
+            if (!"Alles".equals(resZoneFilter) && !r.preferredZone.equals(resZoneFilter)) continue;
+            if (!searchText.trim().isEmpty() && !r.name.toLowerCase(Locale.ROOT).contains(searchText.trim().toLowerCase(Locale.ROOT))) continue;
+            content.addView(reservationCard(r), full());
+        }
+    }
+
+    private Button resFilter(String z) {
+        boolean on = resZoneFilter.equals(z);
+        Button b = button(z, on ? DARK_GREEN : Color.WHITE, on ? Color.WHITE : DARK_GREEN);
+        b.setTextSize(12);
+        b.setOnClickListener(v -> { resZoneFilter = z; render(); });
+        return b;
+    }
+
+    private View reservationCard(Reservation r) {
+        LinearLayout p = panel();
+        int color = reservationColor(r.status);
+        p.setBackground(bg(Color.WHITE, color, 1, 8));
+        p.addView(text(r.time + "  " + safe(r.name, "Gast"), 21, INK, true));
+        p.addView(text(r.partySize + " pers. - " + r.preferredZone + " - " + displayStatus(r.status), 15, color, true));
+        p.addView(text("Tafel: " + (r.assignedTableIds.isEmpty() ? "nog kiezen" : tableNames(r.assignedTableIds)), 16, INK, false));
+        if (!r.notes.isEmpty()) p.addView(text("Notitie: " + r.notes, 14, Color.rgb(83, 78, 66), false));
+        Assignment a = suggest(r, false);
+        p.addView(text("Beste keuze: " + a.bestText, 15, DARK_GREEN, true));
+        if (!a.alternatives.isEmpty()) p.addView(text("Alternatieven: " + join(a.alternatives, ", "), 14, Color.rgb(83, 78, 66), false));
+        if (!a.riskText.isEmpty()) p.addView(text("Risico: " + a.riskText, 14, RISK_RED, true));
+        LinearLayout buttons = row();
+        buttons.addView(cardAction("Aanwezig", GREEN, () -> { r.status = "aanwezig"; saveReservations(); render(); }), weight());
+        buttons.addView(cardAction("Zit", RED, () -> seatReservation(r)), weight());
+        buttons.addView(cardAction("Tafel", BLUE, () -> chooseTable(r)), weight());
+        p.addView(buttons);
+        LinearLayout buttons2 = row();
+        buttons2.addView(cardAction("Wijzig", Color.WHITE, () -> reservationDialog(r, false)), weight());
+        buttons2.addView(cardAction("Rekening", BLUE, () -> { r.status = "rekening"; markReservationTables(r, "rekening"); saveAll(); render(); }), weight());
+        buttons2.addView(cardAction("No-show", DARK_GREY, () -> { r.status = "no-show"; releaseReservationTables(r); saveAll(); render(); }), weight());
+        p.addView(buttons2);
+        return p;
+    }
+
+    private Button cardAction(String label, int color, Runnable r) {
+        int fg = color == Color.WHITE ? DARK_GREEN : Color.WHITE;
+        Button b = button(label, color, fg);
+        b.setTextSize(13);
+        b.setOnClickListener(v -> r.run());
+        return b;
+    }
+
+    private void renderPhone() {
+        LinearLayout p = panel();
+        p.addView(text("Telefoonmodus", 25, INK, true));
+        p.addView(text("Snel antwoord voor bellers. Grote velden, direct voorstel.", 15, Color.rgb(83,78,66), false));
+        EditText d = field("Datum", phoneDate), t = field("Tijd", phoneTime), party = field("Aantal personen", phoneParty);
+        party.setInputType(InputType.TYPE_CLASS_NUMBER);
+        Spinner pref = spinner(new String[]{"Geen voorkeur", "Binnen", "Tuin", "Buitenterras"}, phoneZone);
+        p.addView(d); p.addView(t); p.addView(party); p.addView(text("Voorkeur", 14, INK, true)); p.addView(pref);
+        Button check = button("Controleer beschikbaarheid", DARK_GREEN, Color.WHITE);
+        check.setOnClickListener(v -> {
+            phoneDate = value(d, LocalDate.now().toString());
+            phoneTime = normalizeTime(t.getText().toString(), "19:00");
+            phoneParty = value(party, "2");
+            phoneZone = pref.getSelectedItem().toString();
+            Reservation probe = new Reservation();
+            probe.name = "Beller"; probe.date = phoneDate; probe.time = phoneTime; probe.partySize = Math.max(1, number(party, 2)); probe.durationMinutes = defaultDuration; probe.preferredZone = phoneZone;
+            Assignment a = suggest(probe, false);
+            phoneAdvice = phoneAnswer(probe, a);
+            render();
+        });
+        p.addView(check, full());
+        TextView answer = text(phoneAdvice, 20, Color.WHITE, true);
+        answer.setPadding(dp(14), dp(16), dp(14), dp(16));
+        answer.setBackground(bg(phoneAdvice.contains("vol") ? ORANGE : DARK_GREEN, DARK_GREEN, 0, 10));
+        p.addView(answer, full());
+        Button make = button("Reservering maken met dit voorstel", BLUE, Color.WHITE);
+        make.setOnClickListener(v -> {
+            Reservation r = new Reservation();
+            r.name = "Nieuwe gast"; r.phone = ""; r.date = phoneDate; r.time = phoneTime; r.partySize = Math.max(1, parseInt(phoneParty, 2)); r.preferredZone = phoneZone; r.durationMinutes = defaultDuration; r.source = "telefoon";
+            Assignment a = suggest(r, true); applyAssignment(r, a); reservations.add(r); saveAll(); screen = "res"; render();
+        });
+        p.addView(make, full());
+        content.addView(p, full());
+    }
+
+    private void renderRisk() {
+        computeRisks();
+        LinearLayout top = panel();
+        int color = riskColor();
+        top.setBackground(bg(Color.WHITE, color, 2, 8));
+        top.addView(text(riskTitle(), 25, color, true));
+        top.addView(text("Personeel, keuken, planning en tafelvrijgave in een oogopslag.", 15, Color.rgb(83,78,66), false));
+        top.addView(stepper("Bediening", serviceStaff, v -> { serviceStaff = Math.max(1, v); saveSettings(); render(); }));
+        top.addView(stepper("Keuken", kitchenStaff, v -> { kitchenStaff = Math.max(1, v); saveSettings(); render(); }));
+        top.addView(choice("Keukencapaciteit", new String[]{"Laag", "Normaal", "Hoog"}, kitchenCapacity, s -> { kitchenCapacity = s; saveSettings(); render(); }));
+        top.addView(choice("Weer buiten", new String[]{"Normaal", "Slecht weer", "Zeer warm"}, weather, s -> { weather = s; saveSettings(); render(); }));
+        content.addView(top, full());
+        if (risks.isEmpty()) content.addView(info("Laag risico: service is haalbaar.", GREEN), full());
+        for (Risk r : risks) content.addView(info(r.severityLabel() + ": " + r.message, r.color()), full());
+    }
+
+    private void renderSettings() {
+        LinearLayout p = panel();
+        p.addView(text("Instellingen", 25, INK, true));
+        p.addView(stepper("Gemiddelde tafelduur", defaultDuration, v -> { defaultDuration = clamp(v, 45, 240); saveSettings(); render(); }));
+        p.addView(text("Zones: Binnen, Tuin, Buitenterras", 16, DARK_GREEN, true));
+        p.addView(text("Plattegrondversie: " + floorRevision, 16, WARM, true));
+        content.addView(p, full());
+        content.addView(settingButton("Reset plattegrond", ORANGE, () -> { seedTables(); saveTables(); render(); }), full());
+        content.addView(settingButton("Reset demo-data", WARM, () -> { seedTables(); seedDemoReservations(); saveAll(); render(); }), full());
+        content.addView(settingButton("Alle reserveringen vandaag wissen", DARK_GREY, () -> { reservations.removeIf(r -> r.date.equals(LocalDate.now().toString())); releaseAllTables(); saveAll(); render(); }), full());
+    }
+
+    private Button settingButton(String label, int color, Runnable r) {
+        Button b = button(label, color, Color.WHITE);
+        b.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(label).setMessage("Weet je het zeker?").setNegativeButton("Annuleren", null).setPositiveButton("Ja", (d,w) -> r.run()).show());
+        return b;
+    }
+
+    private void serviceDialog(Table t) {
+        ArrayList<Table> group = groupFor(t);
+        LinearLayout box = column();
+        box.setPadding(dp(8), 0, dp(8), 0);
+        box.addView(text(group.size() > 1 ? "Tafelgroep " + tableNames(idsOf(group)) : "Tafel " + t.number, 24, INK, true));
+        box.addView(text(totalCapacity(group) + " personen - " + displayStatus(displayStatusAt(t)), 16, statusColor(displayStatusAt(t)), true));
+        Reservation linked = linkedReservation(t);
+        if (linked != null) box.addView(text("Reservering: " + linked.time + " - " + linked.name, 16, BLUE, true));
+        EditText note = field("Notitie", t.note);
+        box.addView(note);
+        addDialogButton(box, "Reservering bekijken", BLUE, () -> { if (linked != null) reservationDialog(linked, false); else toast("Geen reservering gekoppeld"); });
+        addDialogButton(box, "Gast aanwezig", GREEN, () -> { if (linked != null) linked.status = "aanwezig"; saveReservations(); render(); });
+        addDialogButton(box, "Tafel bezet maken", RED, () -> { markGroup(group, "bezet"); copyNote(group, note); saveTables(); render(); });
+        addDialogButton(box, "Tafel vrijmaken", GREEN, () -> { for (Table x : group) x.clearService(); saveAll(); render(); });
+        addDialogButton(box, "Rekening gevraagd", BLUE, () -> { markGroup(group, "rekening"); copyNote(group, note); saveTables(); render(); });
+        addDialogButton(box, "Bijna vrij", ORANGE, () -> { markGroup(group, "bijna vrij"); copyNote(group, note); saveTables(); render(); });
+        addDialogButton(box, "Reservering verplaatsen", WARM, () -> { if (linked != null) chooseTable(linked); else toast("Geen reservering gekoppeld"); });
+        addDialogButton(box, "Tafel koppelen aan reservering", DARK_GREEN, () -> linkReservationToTable(t));
+        addDialogButton(box, "Buiten gebruik", DARK_GREY, () -> { for (Table x: group) { x.isOutOfService = true; x.status = "buiten gebruik"; } saveTables(); render(); });
+        new AlertDialog.Builder(this).setView(box).setNegativeButton("Sluiten", null).setPositiveButton("Notitie opslaan", (d,w) -> { copyNote(group, note); saveTables(); render(); }).show();
+    }
+
+    private void addDialogButton(LinearLayout box, String label, int color, Runnable r) {
+        Button b = button(label, color, Color.WHITE);
+        b.setOnClickListener(v -> r.run());
+        box.addView(b, full());
+    }
+
+    private void reservationDialog(Reservation r, boolean fresh) {
+        LinearLayout box = column(); box.setPadding(dp(8), 0, dp(8), 0);
+        EditText name = field("Naam", r.name), phone = field("Telefoon", r.phone), date = field("Datum", r.date.isEmpty() ? selectedDate.toString() : r.date), time = field("Tijd", r.time.isEmpty() ? selectedTime.format(TIME_FMT) : r.time);
+        EditText party = field("Aantal personen", r.partySize > 0 ? "" + r.partySize : "2"), duration = field("Duur minuten", r.durationMinutes > 0 ? "" + r.durationMinutes : "" + defaultDuration), notes = field("Notitie", r.notes);
+        party.setInputType(InputType.TYPE_CLASS_NUMBER); duration.setInputType(InputType.TYPE_CLASS_NUMBER);
+        Spinner pref = spinner(new String[]{"Geen voorkeur", "Binnen", "Tuin", "Buitenterras"}, safe(r.preferredZone, "Geen voorkeur"));
+        Spinner status = spinner(new String[]{"verwacht", "aanwezig", "zit", "hoofdgerecht", "dessert", "rekening", "vertrokken", "geannuleerd", "no-show"}, safe(r.status, "verwacht"));
+        box.addView(name); box.addView(phone); box.addView(date); box.addView(time); box.addView(party); box.addView(duration); box.addView(text("Voorkeur", 14, INK, true)); box.addView(pref); box.addView(text("Status", 14, INK, true)); box.addView(status); box.addView(notes);
+        new AlertDialog.Builder(this).setTitle(fresh ? "Reservering toevoegen" : "Reservering wijzigen").setView(box).setNegativeButton("Annuleren", null).setPositiveButton("Opslaan", (d,w) -> {
+            r.name = value(name, "Gast"); r.phone = phone.getText().toString().trim(); r.date = value(date, selectedDate.toString()); r.time = normalizeTime(time.getText().toString(), selectedTime.format(TIME_FMT));
+            r.partySize = Math.max(1, number(party, 2)); r.durationMinutes = Math.max(30, number(duration, defaultDuration)); r.preferredZone = pref.getSelectedItem().toString(); r.status = status.getSelectedItem().toString(); r.notes = notes.getText().toString().trim();
+            if (r.createdAt.isEmpty()) r.createdAt = LocalDateTime.now().toString();
+            Assignment a = suggest(r, true); applyAssignment(r, a);
+            if (fresh) reservations.add(r);
+            saveAll(); render();
+        }).show();
+    }
+
+    private void editTable(Table t, boolean fresh) {
+        LinearLayout box = column(); box.setPadding(dp(8), 0, dp(8), 0);
+        EditText nr = field("Tafelnummer", t.number), cap = field("Capaciteit", "" + t.capacity), width = field("Breedte", "" + t.width), height = field("Hoogte", "" + t.height);
+        cap.setInputType(InputType.TYPE_CLASS_NUMBER); width.setInputType(InputType.TYPE_CLASS_NUMBER); height.setInputType(InputType.TYPE_CLASS_NUMBER);
+        Spinner shape = spinner(new String[]{"2-persoons", "4-persoons", "6-persoons", "lange groepstafel", "ronde tafel", "vierkante tafel"}, t.shape);
+        Spinner zone = spinner(new String[]{"Binnen", "Tuin", "Buitenterras"}, t.zone);
+        box.addView(nr); box.addView(cap); box.addView(width); box.addView(height); box.addView(text("Vorm", 14, INK, true)); box.addView(shape); box.addView(text("Zone", 14, INK, true)); box.addView(zone);
+        new AlertDialog.Builder(this).setTitle(fresh ? "Tafel toevoegen" : "Tafel wijzigen").setView(box).setNegativeButton("Annuleren", null).setPositiveButton("Opslaan", (d,w) -> {
+            String old = t.number; t.number = value(nr, old); t.capacity = Math.max(1, number(cap, t.capacity)); t.width = clamp(number(width, t.width), 70, 220); t.height = clamp(number(height, t.height), 70, 180); t.shape = shape.getSelectedItem().toString(); t.zone = zone.getSelectedItem().toString(); snap(t);
+            if (fresh) tables.add(t); renameTable(old, t.number); selectedTableIds.clear(); selectedTableIds.add(t.id); saveTables(); render();
+        }).show();
+    }
+
+    private class FloorView extends View {
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); Table dragging; float downX, downY; boolean moved;
+        FloorView(Context c) { super(c); }
+        @Override protected void onDraw(Canvas c) {
+            p.setStyle(Paint.Style.FILL); p.setColor(PAPER); c.drawRect(0,0,getWidth(),getHeight(),p);
+            drawGrid(c); drawGroups(c);
+            for (Table t : tables) if (visible(t)) drawTable(c, t);
+        }
+        private void drawGrid(Canvas c) {
+            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(1)); p.setColor(Color.rgb(235, 228, 210));
+            for (int x = 5; x < 100; x += 5) { float px = x * getWidth() / 100f; c.drawLine(px, dp(42), px, getHeight() - dp(10), p); }
+            for (int y = 10; y < 100; y += 5) { float py = y * getHeight() / 100f; c.drawLine(dp(10), py, getWidth() - dp(10), py, p); }
+            p.setStyle(Paint.Style.FILL); p.setColor(DARK_GREEN); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(dp(16));
+            c.drawText(activeZone + " - " + selectedTime.format(TIME_FMT), dp(18), dp(30), p);
+        }
+        private void drawGroups(Canvas c) {
+            HashSet<String> drawn = new HashSet<>();
+            for (Table t : tables) if (visible(t) && !t.linkedTableIds.isEmpty() && !drawn.contains(t.id)) {
+                ArrayList<Table> g = groupFor(t); for (Table x : g) drawn.add(x.id);
+                RectF bounds = null; for (Table x : g) if (visible(x)) { RectF r = rect(x); if (bounds == null) bounds = new RectF(r); else bounds.union(r); }
+                if (bounds != null) { bounds.inset(-dp(10), -dp(10)); p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(255, 243, 222)); c.drawRoundRect(bounds, dp(14), dp(14), p); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(4)); p.setColor(ORANGE); c.drawRoundRect(bounds, dp(14), dp(14), p); }
+            }
+        }
+        private void drawTable(Canvas c, Table t) {
+            RectF r = rect(t); String st = displayStatusAt(t); int color = statusColor(st);
+            p.setStyle(Paint.Style.FILL); p.setColor(color);
+            if (isRound(t)) c.drawOval(r, p); else c.drawRoundRect(r, dp(9), dp(9), p);
+            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(selectedTableIds.contains(t.id) ? dp(6) : dp(2)); p.setColor(selectedTableIds.contains(t.id) ? WARM : Color.WHITE);
+            if (isRound(t)) c.drawOval(r, p); else c.drawRoundRect(r, dp(9), dp(9), p);
+            p.setStyle(Paint.Style.FILL); p.setTextAlign(Paint.Align.CENTER); p.setTypeface(Typeface.DEFAULT_BOLD); p.setColor(Color.WHITE); p.setTextSize(dp(t.number.length() > 3 ? 18 : 23));
+            c.drawText(t.number, r.centerX(), r.centerY() + dp(7), p);
+            p.setTextSize(dp(12));
+            String line = labelForTable(t, st); if (!line.isEmpty()) c.drawText(line, r.centerX(), r.bottom + dp(16), p);
+            p.setTextAlign(Paint.Align.LEFT);
+        }
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            Table hit = hit(e.getX(), e.getY());
+            if (e.getAction() == MotionEvent.ACTION_DOWN) { dragging = hit; downX = e.getX(); downY = e.getY(); moved = false; return hit != null; }
+            if (e.getAction() == MotionEvent.ACTION_MOVE && !serviceMode && dragging != null) {
+                if (Math.abs(e.getX() - downX) > dp(5) || Math.abs(e.getY() - downY) > dp(5)) moved = true;
+                dragging.x = clamp(Math.round(e.getX() * 100f / Math.max(1, getWidth())), 5, 95); dragging.y = clamp(Math.round(e.getY() * 100f / Math.max(1, getHeight())), 8, 95); snap(dragging); invalidate(); return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP && dragging != null) {
+                Table t = dragging; dragging = null;
+                if (serviceMode) serviceDialog(t); else { if (!moved) { if (selectedTableIds.contains(t.id)) selectedTableIds.remove(t.id); else selectedTableIds.add(t.id); } saveTables(); render(); }
+                return true;
+            }
+            return true;
+        }
+        private RectF rect(Table t) { float cx = t.x * getWidth() / 100f, cy = t.y * getHeight() / 100f; float w = Math.max(dp(70), dp(t.width)), h = Math.max(dp(70), dp(t.height)); return new RectF(cx - w/2, cy - h/2, cx + w/2, cy + h/2); }
+        private Table hit(float x, float y) { for (int i = tables.size()-1; i >= 0; i--) { Table t = tables.get(i); if (!visible(t)) continue; RectF r = rect(t); r.inset(-dp(8), -dp(8)); if (r.contains(x, y)) return t; } return null; }
+    }
+
+    private Assignment suggest(Reservation r, boolean allowGroups) {
+        Assignment out = new Assignment(); LocalTime start = parseTime(r.time, selectedTime); int duration = r.durationMinutes > 0 ? r.durationMinutes : defaultDuration;
+        ArrayList<Candidate> candidates = new ArrayList<>(); HashSet<String> seenGroups = new HashSet<>();
+        for (Table t : tables) {
+            if (!zoneOk(t.zone, r.preferredZone) || t.isOutOfService) continue;
+            if (!freeAt(t, r.date, start, duration, r.id)) continue;
+            ArrayList<Table> group = groupFor(t); String key = groupKey(group); if (seenGroups.contains(key)) continue; seenGroups.add(key);
+            int cap = totalCapacity(group); if (cap >= r.partySize) candidates.add(new Candidate(idsOf(group), cap, group.size() > 1 ? "combinatie " + tableNames(idsOf(group)) : "tafel " + t.number, group.get(0).zone));
+        }
+        if (allowGroups && r.partySize >= 5) candidates.addAll(groupCandidates(r, start, duration));
+        Collections.sort(candidates, (a,b) -> a.capacity != b.capacity ? a.capacity - b.capacity : a.label.compareTo(b.label));
+        Candidate best = null; for (Candidate c : candidates) if (c.capacity == r.partySize) { best = c; break; } if (best == null && !candidates.isEmpty()) best = candidates.get(0);
+        if (best != null) { out.best = best; out.bestText = best.label + " (" + best.capacity + " pers.)"; for (Candidate c : candidates) if (c != best && out.alternatives.size() < 3) out.alternatives.add(c.label); }
+        else { out.bestText = "geen passende tafel vrij"; out.riskText = laterSuggestion(r); }
+        if (peakAround(r.date, start) >= 4) out.riskText = appendRisk(out.riskText, "veel reserveringen rond " + r.time);
+        return out;
+    }
+
+    private ArrayList<Candidate> groupCandidates(Reservation r, LocalTime start, int duration) {
+        ArrayList<Candidate> out = new ArrayList<>(); ArrayList<Table> free = new ArrayList<>();
+        for (Table t : tables) if (t.linkedTableIds.isEmpty() && !t.isOutOfService && zoneOk(t.zone, r.preferredZone) && freeAt(t, r.date, start, duration, r.id)) free.add(t);
+        for (int i=0;i<free.size();i++) for (int j=i+1;j<free.size();j++) {
+            Table a = free.get(i), b = free.get(j); if (!a.zone.equals(b.zone)) continue; if (Math.abs(a.x-b.x) > 22 || Math.abs(a.y-b.y) > 22) continue;
+            int cap = a.capacity + b.capacity; if (cap >= r.partySize) out.add(new Candidate(idsOf(Arrays.asList(a,b)), cap, a.number + " + " + b.number + " aanbevolen", a.zone));
+        }
+        Collections.sort(out, (a,b) -> a.capacity - b.capacity); return out;
+    }
+
+    private void applyAssignment(Reservation r, Assignment a) {
+        releaseReservationTables(r); r.assignedTableIds.clear(); if (a.best == null) return;
+        r.assignedTableIds.addAll(a.best.tableIds);
+        for (String id : r.assignedTableIds) { Table t = tableById(id); if (t != null) { t.reservationId = r.id; if ("verwacht".equals(r.status)) t.status = "gereserveerd"; } }
+    }
+
+    private void seatReservation(Reservation r) { if (r.assignedTableIds.isEmpty()) applyAssignment(r, suggest(r, true)); r.status = "zit"; markReservationTables(r, "bezet"); saveAll(); render(); }
+    private void chooseTable(Reservation r) {
+        Assignment a = suggest(r, true); ArrayList<String> labels = new ArrayList<>(); ArrayList<Candidate> options = new ArrayList<>(); labels.add("Geen tafel"); if (a.best != null) { labels.add("Beste keuze: " + a.best.label); options.add(a.best); }
+        for (String alt : a.alternatives) for (Candidate c : groupCandidatesForLabel(r, alt)) { labels.add(c.label); options.add(c); }
+        for (Table t : tables) if (zoneOk(t.zone, r.preferredZone) && !t.isOutOfService) { Candidate c = new Candidate(one(t.id), t.capacity, "tafel " + t.number, t.zone); labels.add(c.label); options.add(c); }
+        Spinner sp = spinner(labels.toArray(new String[0]), labels.get(0));
+        new AlertDialog.Builder(this).setTitle("Tafel kiezen").setView(sp).setNegativeButton("Annuleren", null).setPositiveButton("Koppelen", (d,w) -> { int pos = sp.getSelectedItemPosition(); releaseReservationTables(r); r.assignedTableIds.clear(); if (pos > 0) r.assignedTableIds.addAll(options.get(pos-1).tableIds); saveAll(); render(); }).show();
+    }
+
+    private ArrayList<Candidate> groupCandidatesForLabel(Reservation r, String label) { ArrayList<Candidate> l = new ArrayList<>(); LocalTime st = parseTime(r.time, selectedTime); for (Candidate c : groupCandidates(r, st, r.durationMinutes > 0 ? r.durationMinutes : defaultDuration)) if (c.label.equals(label)) l.add(c); return l; }
+    private void linkReservationToTable(Table t) {
+        ArrayList<Reservation> open = new ArrayList<>(); ArrayList<String> labels = new ArrayList<>(); labels.add("Kies reservering");
+        for (Reservation r : reservations) if (r.date.equals(selectedDate.toString()) && !closed(r.status)) { open.add(r); labels.add(r.time + " - " + r.name + " (" + r.partySize + ")"); }
+        Spinner sp = spinner(labels.toArray(new String[0]), labels.get(0));
+        new AlertDialog.Builder(this).setTitle("Koppel aan reservering").setView(sp).setNegativeButton("Annuleren", null).setPositiveButton("Koppelen", (d,w) -> { int pos = sp.getSelectedItemPosition()-1; if (pos >= 0) { Reservation r = open.get(pos); releaseReservationTables(r); r.assignedTableIds.clear(); r.assignedTableIds.addAll(idsOf(groupFor(t))); for (String id : r.assignedTableIds) { Table x = tableById(id); if (x != null) x.reservationId = r.id; } saveAll(); render(); } }).show();
+    }
+
+    private void mergeTables() {
+        if (selectedTableIds.size() < 2) { toast("Selecteer minimaal twee tafels"); return; }
+        ArrayList<String> ids = new ArrayList<>(selectedTableIds);
+        for (String id : ids) { Table t = tableById(id); if (t != null) { t.linkedTableIds.clear(); for (String other : ids) if (!other.equals(id)) t.linkedTableIds.add(other); } }
+        saveTables(); render();
+    }
+    private void splitTables() { forSelected(t -> t.linkedTableIds.clear()); saveTables(); render(); }
+    private void deleteSelected() { if (selectedTableIds.isEmpty()) return; new AlertDialog.Builder(this).setTitle("Tafels verwijderen").setMessage("Geselecteerde tafels verwijderen?").setNegativeButton("Annuleren", null).setPositiveButton("Verwijder", (d,w) -> { tables.removeIf(t -> selectedTableIds.contains(t.id)); selectedTableIds.clear(); saveTables(); render(); }).show(); }
+
+    private void computeRisks() {
+        risks.clear(); HashMap<String,Integer> perQuarter = new HashMap<>();
+        for (Reservation r : reservations) if (r.date.equals(selectedDate.toString()) && !closed(r.status)) { String bucket = r.time; perQuarter.put(bucket, perQuarter.containsKey(bucket) ? perQuarter.get(bucket)+r.partySize : r.partySize); }
+        for (String bucket : perQuarter.keySet()) if (perQuarter.get(bucket) >= 18) risks.add(new Risk("keukenpiek", "hoog", "Keukenpiek rond " + bucket + ": " + perQuarter.get(bucket) + " gasten tegelijk.")); else if (perQuarter.get(bucket) >= 12) risks.add(new Risk("drukte", "middel", "Veel gasten rond " + bucket + ". Spreid reserveringen waar mogelijk."));
+        int seatedGuests = seatedGuests(); if (seatedGuests / Math.max(1, serviceStaff) > 18) risks.add(new Risk("bediening", "hoog", "Te weinig bediening voor " + seatedGuests + " gasten."));
+        int kitchenLimit = "Hoog".equals(kitchenCapacity) ? 28 : "Laag".equals(kitchenCapacity) ? 14 : 20; if (seatedGuests / Math.max(1, kitchenStaff) > kitchenLimit) risks.add(new Risk("keuken", "hoog", "Keuken raakt overbelast. Beperk grote groepen tijdelijk."));
+        if (countStatus("rekening") >= 4) risks.add(new Risk("rekening", "middel", "Veel tafels op rekening. Versnel afrekenen."));
+        if (countStatus("bijna vrij") >= 5) risks.add(new Risk("vrijgave", "middel", "Veel tafels bijna vrij. Zet iemand op afruimen."));
+        if ("Slecht weer".equals(weather)) for (Reservation r : reservations) if (r.date.equals(selectedDate.toString()) && ("Tuin".equals(r.preferredZone) || "Buitenterras".equals(r.preferredZone))) { risks.add(new Risk("weer", "middel", "Buitenreservering bij slecht weer: " + r.time + " " + r.name)); break; }
+        for (Reservation r : reservations) if (r.date.equals(selectedDate.toString()) && !r.assignedTableIds.isEmpty() && !closed(r.status)) for (String id : r.assignedTableIds) if (doubleBooked(r, id)) risks.add(new Risk("dubbel", "hoog", "Tafel dubbel gepland rond " + r.time + ": " + tableNumber(id)));
+    }
+
+    private void loadAll() { loadSettings(); loadTables(); loadReservations(); if (tables.isEmpty()) { seedTables(); saveTables(); } }
+    private void loadTables() { tables.clear(); try { JSONArray a = new JSONArray(prefs.getString(KEY_TABLES, "[]")); for (int i=0;i<a.length();i++) tables.add(Table.from(a.getJSONObject(i))); } catch(Exception ignored) { tables.clear(); } }
+    private void loadReservations() { reservations.clear(); try { JSONArray a = new JSONArray(prefs.getString(KEY_RES, "[]")); for (int i=0;i<a.length();i++) reservations.add(Reservation.from(a.getJSONObject(i))); } catch(Exception ignored) { reservations.clear(); } }
+    private void loadSettings() { try { JSONObject j = new JSONObject(prefs.getString(KEY_SETTINGS, "{}")); serviceStaff = j.optInt("serviceStaff", 4); kitchenStaff = j.optInt("kitchenStaff", 2); defaultDuration = j.optInt("defaultDuration", 120); kitchenCapacity = j.optString("kitchenCapacity", "Normaal"); weather = j.optString("weather", "Normaal"); floorRevision = j.optInt("floorRevision", 1); } catch(Exception ignored) {} }
+    private void saveAll() { saveTables(); saveReservations(); saveSettings(); }
+    private void saveTables() { JSONArray a = new JSONArray(); for (Table t : tables) a.put(t.json()); prefs.edit().putString(KEY_TABLES, a.toString()).apply(); }
+    private void saveReservations() { JSONArray a = new JSONArray(); for (Reservation r : reservations) a.put(r.json()); prefs.edit().putString(KEY_RES, a.toString()).apply(); }
+    private void saveSettings() { JSONObject j = new JSONObject(); try { j.put("serviceStaff", serviceStaff); j.put("kitchenStaff", kitchenStaff); j.put("defaultDuration", defaultDuration); j.put("kitchenCapacity", kitchenCapacity); j.put("weather", weather); j.put("floorRevision", floorRevision); } catch(Exception ignored) {} prefs.edit().putString(KEY_SETTINGS, j.toString()).apply(); }
+
+    private void seedTables() {
+        tables.clear();
+        String[] inside = {"1","2","3","3b","4","5","5b","6","7","8","9","10","11","12","13","14","15","16"};
+        int[][] pi = {{14,14},{33,14},{52,14},{72,14},{88,14},{15,33},{34,33},{53,33},{75,33},{15,53},{35,53},{55,53},{77,53},{15,75},{35,75},{55,75},{75,75},{90,75}};
+        for (int i=0;i<inside.length;i++) addSeed(inside[i], "Binnen", pi[i][0], pi[i][1], inside[i].contains("b") ? 2 : (i>=11 && i<=12 ? 6 : 4), inside[i].contains("b") ? "ronde tafel" : "vierkante tafel");
+        String[] garden = {"40","41","41-1","42","43","43-2","44","45","46","47","47-2","48","49","49-2"};
+        int[][] pg = {{14,16},{32,16},{50,16},{70,16},{88,16},{18,38},{38,38},{58,38},{78,38},{20,62},{40,62},{60,62},{80,62},{50,84}};
+        for (int i=0;i<garden.length;i++) addSeed(garden[i], "Tuin", pg[i][0], pg[i][1], garden[i].contains("-") ? 2 : 4, garden[i].contains("-") ? "ronde tafel" : "4-persoons");
+        String[] terrace = {"50","51","52","53","53-2","54","54-2","55","56","57","58"};
+        int[][] pt = {{14,18},{34,18},{54,18},{74,18},{90,18},{18,45},{38,45},{58,45},{78,45},{30,72},{62,72}};
+        for (int i=0;i<terrace.length;i++) addSeed(terrace[i], "Buitenterras", pt[i][0], pt[i][1], terrace[i].contains("-") ? 2 : 4, i>=9 ? "lange groepstafel" : "vierkante tafel");
+    }
+    private void addSeed(String number, String zone, int x, int y, int cap, String shape) { int w = cap >= 6 ? 140 : 88, h = cap >= 6 ? 86 : 78; if (shape.contains("ronde")) { w = 80; h = 80; } tables.add(new Table("table-" + number, number, zone, x, y, w, h, shape, cap)); }
+    private void seedDemoReservations() { reservations.clear(); Reservation a = demo("Jansen", "18:00", 2, "Binnen"); Reservation b = demo("De Vries", "18:30", 4, "Tuin"); Reservation c = demo("Bakker", "19:00", 6, "Geen voorkeur"); reservations.add(a); reservations.add(b); reservations.add(c); for (Reservation r : reservations) applyAssignment(r, suggest(r, true)); }
+    private Reservation demo(String name, String time, int party, String zone) { Reservation r = new Reservation(); r.name = name; r.date = LocalDate.now().toString(); r.time = time; r.partySize = party; r.preferredZone = zone; r.durationMinutes = defaultDuration; r.source = "demo"; r.createdAt = LocalDateTime.now().toString(); return r; }
+
+    private boolean visible(Table t) { return "Alles".equals(activeZone) || activeZone.equals(t.zone); }
+    private String displayStatusAt(Table t) { if (t.isOutOfService) return "buiten gebruik"; Reservation r = linkedReservation(t); if (r != null && r.date.equals(selectedDate.toString()) && !closed(r.status)) { LocalTime st = parseTime(r.time, selectedTime); LocalTime end = st.plusMinutes(r.durationMinutes > 0 ? r.durationMinutes : defaultDuration); if (!selectedTime.isBefore(st.minusMinutes(30)) && selectedTime.isBefore(st)) return "gereserveerd"; if (!selectedTime.isBefore(st) && selectedTime.isBefore(end)) return r.status.equals("verwacht") || r.status.equals("aanwezig") ? "gereserveerd" : r.status; } return t.status; }
+    private int statusColor(String s) { if ("vrij".equals(s)) return GREEN; if ("gereserveerd".equals(s)) return Color.rgb(238, 238, 232); if ("bijna vrij".equals(s) || "dessert".equals(s)) return ORANGE; if ("bezet".equals(s) || "zit".equals(s) || "hoofdgerecht".equals(s)) return RED; if ("rekening".equals(s)) return BLUE; if ("buiten gebruik".equals(s)) return DARK_GREY; if ("risico".equals(s)) return RISK_RED; return GREEN; }
+    private int reservationColor(String s) { if ("verwacht".equals(s)) return WARM; if ("aanwezig".equals(s)) return GREEN; if ("zit".equals(s) || "hoofdgerecht".equals(s)) return RED; if ("dessert".equals(s)) return ORANGE; if ("rekening".equals(s)) return BLUE; if (closed(s)) return DARK_GREY; return WARM; }
+    private String displayStatus(String s) { if (s == null || s.isEmpty()) return "vrij"; return s.substring(0,1).toUpperCase(Locale.ROOT) + s.substring(1); }
+    private String labelForTable(Table t, String st) { Reservation r = linkedReservation(t); if (r != null && !closed(r.status)) return r.time + " " + shortText(r.name, 10); if ("rekening".equals(st) || "bijna vrij".equals(st) || "buiten gebruik".equals(st)) return displayStatus(st); return ""; }
+    private boolean isRound(Table t) { return t.shape.contains("ronde") || t.shape.contains("rond"); }
+    private boolean zoneOk(String tableZone, String pref) { return pref == null || pref.isEmpty() || "Geen voorkeur".equals(pref) || tableZone.equals(pref); }
+    private boolean freeAt(Table t, String date, LocalTime start, int duration, String ignoreId) { if (t.isOutOfService) return false; LocalTime end = start.plusMinutes(duration); for (Reservation r : reservations) { if (r.id.equals(ignoreId) || !r.date.equals(date) || closed(r.status)) continue; if (!r.assignedTableIds.contains(t.id)) continue; LocalTime rs = parseTime(r.time, start); LocalTime re = rs.plusMinutes(r.durationMinutes > 0 ? r.durationMinutes : defaultDuration); if (start.isBefore(re) && end.isAfter(rs)) return false; } if (date.equals(LocalDate.now().toString()) && Math.abs(Duration.between(LocalTime.now(), start).toMinutes()) < 45) return "vrij".equals(t.status) || "gereserveerd".equals(t.status); return true; }
+    private boolean closed(String s) { return "vertrokken".equals(s) || "geannuleerd".equals(s) || "no-show".equals(s); }
+    private boolean doubleBooked(Reservation base, String tableId) { LocalTime s = parseTime(base.time, selectedTime), e = s.plusMinutes(base.durationMinutes > 0 ? base.durationMinutes : defaultDuration); for (Reservation r : reservations) if (!r.id.equals(base.id) && r.date.equals(base.date) && !closed(r.status) && r.assignedTableIds.contains(tableId)) { LocalTime rs = parseTime(r.time, s), re = rs.plusMinutes(r.durationMinutes > 0 ? r.durationMinutes : defaultDuration); if (s.isBefore(re) && e.isAfter(rs)) return true; } return false; }
+    private int peakAround(String date, LocalTime time) { int n=0; for (Reservation r : reservations) if (r.date.equals(date) && !closed(r.status)) { long diff = Math.abs(Duration.between(time, parseTime(r.time, time)).toMinutes()); if (diff <= 15) n++; } return n; }
+    private String laterSuggestion(Reservation r) { LocalTime base = parseTime(r.time, selectedTime); for (int d : new int[]{-30,30,-60,60,75}) { Reservation p = r.copy(); p.time = base.plusMinutes(d).format(TIME_FMT); if (suggest(p, false).best != null) return "om " + p.time + " kan het mogelijk wel"; } return "vol op dit moment"; }
+    private String phoneAnswer(Reservation r, Assignment a) { if (a.best != null) return "Ja hoor, wij hebben om " + r.time + " plek voor " + r.partySize + " personen " + zoneText(a.best.zone) + ". Beste tafel: " + a.best.label + "."; return "Om " + r.time + " zitten we vol voor " + r.partySize + " personen. " + a.riskText + "."; }
+    private String zoneText(String z) { return "Binnen".equals(z) ? "binnen" : "op " + z.toLowerCase(Locale.ROOT); }
+    private String appendRisk(String old, String add) { return old == null || old.isEmpty() ? add : old + "; " + add; }
+
+    private int todayReservations() { int n=0; for (Reservation r: reservations) if (r.date.equals(selectedDate.toString()) && !closed(r.status)) n++; return n; }
+    private int todayGuests() { int n=0; for (Reservation r: reservations) if (r.date.equals(selectedDate.toString()) && !closed(r.status)) n += r.partySize; return n; }
+    private int freeNow() { int n=0; for (Table t: tables) if ("vrij".equals(displayStatusAt(t))) n++; return n; }
+    private int freeSoon() { int n=0; for (Table t: tables) if ("bijna vrij".equals(t.status) || "dessert".equals(displayStatusAt(t)) || "rekening".equals(displayStatusAt(t))) n++; return n; }
+    private int countStatus(String status) { int n=0; for (Table t: tables) if (status.equals(t.status) || status.equals(displayStatusAt(t))) n++; return n; }
+    private int seatedGuests() { int n=0; for (Reservation r: reservations) if (r.date.equals(selectedDate.toString()) && ("zit".equals(r.status) || "hoofdgerecht".equals(r.status) || "dessert".equals(r.status) || "rekening".equals(r.status))) n += r.partySize; return n; }
+    private int riskColor() { for (Risk r: risks) if ("hoog".equals(r.severity)) return RISK_RED; return risks.isEmpty() ? GREEN : ORANGE; }
+    private String riskTitle() { for (Risk r: risks) if ("hoog".equals(r.severity)) return "Hoog risico"; return risks.isEmpty() ? "Laag risico" : "Middel risico"; }
+
+    private ArrayList<Table> groupFor(Table t) { ArrayList<Table> g = new ArrayList<>(); g.add(t); for (String id : t.linkedTableIds) { Table x = tableById(id); if (x != null && !g.contains(x)) g.add(x); } return g; }
+    private ArrayList<String> idsOf(Collection<Table> group) { ArrayList<String> ids = new ArrayList<>(); for (Table t : group) ids.add(t.id); return ids; }
+    private ArrayList<String> one(String id) { ArrayList<String> ids = new ArrayList<>(); ids.add(id); return ids; }
+    private String groupKey(ArrayList<Table> g) { ArrayList<String> ids = idsOf(g); Collections.sort(ids); return join(ids, "+"); }
+    private int totalCapacity(ArrayList<Table> group) { int n=0; for (Table t: group) n += t.capacity; return n; }
+    private String tableNames(Collection<String> ids) { ArrayList<String> names = new ArrayList<>(); for (String id: ids) names.add(tableNumber(id)); return join(names, " + "); }
+    private String tableNumber(String id) { Table t = tableById(id); return t == null ? "?" : t.number; }
+    private Table tableById(String id) { for (Table t: tables) if (t.id.equals(id)) return t; return null; }
+    private Table firstSelected() { for (String id: selectedTableIds) { Table t = tableById(id); if (t != null) return t; } return null; }
+    private Reservation linkedReservation(Table t) { for (Reservation r: reservations) if (r.id.equals(t.reservationId) || r.assignedTableIds.contains(t.id)) return r; return null; }
+    private void releaseReservationTables(Reservation r) { for (Table t: tables) if (r.id.equals(t.reservationId)) { t.reservationId = ""; if ("gereserveerd".equals(t.status)) t.status = "vrij"; } }
+    private void releaseAllTables() { for (Table t: tables) { t.reservationId = ""; if ("gereserveerd".equals(t.status)) t.status = "vrij"; } }
+    private void markReservationTables(Reservation r, String status) { for (String id: r.assignedTableIds) { Table t = tableById(id); if (t != null) t.status = status; } }
+    private void markGroup(ArrayList<Table> group, String status) { for (Table t: group) { t.status = status; t.isOutOfService = "buiten gebruik".equals(status); } }
+    private void copyNote(ArrayList<Table> group, EditText note) { for (Table t: group) t.note = note.getText().toString().trim(); }
+    private void renameTable(String old, String nr) { for (Reservation r: reservations) { } }
+    private void forSelected(TableAction action) { for (String id: selectedTableIds) { Table t = tableById(id); if (t != null) action.run(t); } }
+    private String nextNumber() { int max=0; for (Table t: tables) try { max = Math.max(max, Integer.parseInt(t.number.replaceAll("[^0-9]", ""))); } catch(Exception ignored) {} return "" + (max + 1); }
+    private String zoneForNewTable() { return "Alles".equals(activeZone) ? "Binnen" : activeZone; }
+    private void snap(Table t) { t.x = clamp(Math.round(t.x / 5f) * 5, 5, 95); t.y = clamp(Math.round(t.y / 5f) * 5, 8, 95); }
+
+    private LinearLayout panel() { LinearLayout p = column(); p.setPadding(dp(12), dp(12), dp(12), dp(12)); p.setBackground(bg(Color.WHITE, LINE, 1, 8)); return p; }
+    private TextView info(String s, int color) { TextView v = text(s, 16, INK, false); v.setPadding(dp(12), dp(12), dp(12), dp(12)); v.setBackground(bg(Color.WHITE, color, 1, 8)); return v; }
+    private LinearLayout stepper(String label, int value, IntSave save) { LinearLayout r = row(); r.setGravity(Gravity.CENTER_VERTICAL); r.addView(text(label, 16, INK, true), new LinearLayout.LayoutParams(0, -2, 1)); Button m=smallButton("-", Color.WHITE, DARK_GREEN), p=smallButton("+", Color.WHITE, DARK_GREEN); TextView val=text(""+value, 18, INK, true); val.setGravity(Gravity.CENTER); m.setOnClickListener(v -> save.save(value-1)); p.setOnClickListener(v -> save.save(value+1)); r.addView(m, fixed(52,48)); r.addView(val, fixed(58,48)); r.addView(p, fixed(52,48)); return r; }
+    private LinearLayout choice(String label, String[] values, String selected, TextSave save) { LinearLayout box = column(); box.addView(text(label, 16, INK, true)); Spinner sp = spinner(values, selected); sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){ public void onItemSelected(AdapterView<?> p, View v, int pos, long id){ String s=values[pos]; if (!s.equals(selected)) save.save(s); } public void onNothingSelected(AdapterView<?> p){} }); box.addView(sp); return box; }
+    private Spinner spinner(String[] values, String selected) { Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values)); for (int i=0;i<values.length;i++) if (values[i].equals(selected)) s.setSelection(i); return s; }
+    private Button button(String label, int bgColor, int fg) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setTypeface(Typeface.DEFAULT_BOLD); b.setTextColor(fg); b.setMinHeight(dp(54)); b.setPadding(dp(8), dp(5), dp(8), dp(5)); b.setBackground(bg(bgColor, bgColor == Color.WHITE ? LINE : bgColor, 1, 8)); return b; }
+    private Button smallButton(String label, int bgColor, int fg) { Button b = button(label, bgColor, fg); b.setTextSize(13); b.setMinHeight(dp(46)); return b; }
+    private EditText field(String hint, String value) { EditText e = new EditText(this); e.setHint(hint); e.setText(value); e.setTextSize(18); e.setSingleLine(false); return e; }
+    private TextView text(String s, int sp, int color, boolean bold) { TextView v = new TextView(this); v.setText(s); v.setTextSize(sp); v.setTextColor(color); if (bold) v.setTypeface(Typeface.DEFAULT_BOLD); return v; }
+    private TextView pill(String s, int color) { TextView v = text(s, 13, Color.WHITE, true); v.setGravity(Gravity.CENTER); v.setPadding(dp(10), dp(7), dp(10), dp(7)); v.setBackground(bg(color, color, 0, 18)); return v; }
+    private LinearLayout row() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); l.setBaselineAligned(false); return l; }
+    private LinearLayout column() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l; }
+    private GradientDrawable bg(int fill, int stroke, int sw, int radius) { GradientDrawable g = new GradientDrawable(); g.setColor(fill); g.setCornerRadius(dp(radius)); if (sw > 0) g.setStroke(dp(sw), stroke); return g; }
+    private LinearLayout.LayoutParams weight() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1); p.setMargins(dp(3), dp(3), dp(3), dp(3)); return p; }
+    private LinearLayout.LayoutParams full() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(0, dp(5), 0, dp(5)); return p; }
+    private LinearLayout.LayoutParams fixed(int w, int h) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(w), dp(h)); p.setMargins(dp(3), dp(3), dp(3), dp(3)); return p; }
+    private View gap(int h) { View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(h))); return v; }
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+    private int clamp(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
+    private int number(EditText e, int fallback) { return parseInt(e.getText().toString().trim(), fallback); }
+    private int parseInt(String s, int fallback) { try { return Integer.parseInt(s.trim()); } catch(Exception e) { return fallback; } }
+    private String value(EditText e, String fallback) { String s = e.getText().toString().trim(); return s.isEmpty() ? fallback : s; }
+    private String safe(String s, String fallback) { return s == null || s.isEmpty() ? fallback : s; }
+    private String shortText(String s, int max) { s = safe(s, ""); return s.length() <= max ? s : s.substring(0, max); }
+    private String join(Collection<String> items, String sep) { StringBuilder b = new StringBuilder(); int i=0; for (String s: items) { if (i++>0) b.append(sep); b.append(s); } return b.toString(); }
+    private String normalizeTime(String s, String fallback) { String c = s.trim().replace('.', ':'); try { if (c.contains(":")) { String[] p = c.split(":"); return LocalTime.of(Integer.parseInt(p[0]), Integer.parseInt(p[1])).format(TIME_FMT); } if (!c.isEmpty()) return LocalTime.of(Integer.parseInt(c), 0).format(TIME_FMT); } catch(Exception ignored) {} return fallback; }
+    private LocalTime parseTime(String s, LocalTime fallback) { try { return LocalTime.parse(normalizeTime(s, fallback.format(TIME_FMT)), TIME_FMT); } catch(Exception e) { return fallback; } }
+    private static LocalTime roundedNow() { LocalTime t = LocalTime.now(); int m = ((t.getMinute() + 14) / 15) * 15; return t.withMinute(0).withSecond(0).withNano(0).plusMinutes(m); }
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+
+    static class Table {
+        String id, number, zone, shape, status = "vrij", reservationId = "", note = ""; int x, y, width, height, capacity; boolean isOutOfService; ArrayList<String> linkedTableIds = new ArrayList<>();
+        Table(String id, String number, String zone, int x, int y, int width, int height, String shape, int capacity) { this.id=id; this.number=number; this.zone=zone; this.x=x; this.y=y; this.width=width; this.height=height; this.shape=shape; this.capacity=capacity; }
+        void clearService() { status = "vrij"; reservationId = ""; note = ""; isOutOfService = false; }
+        JSONObject json() { JSONObject j = new JSONObject(); try { j.put("id", id); j.put("number", number); j.put("zone", zone); j.put("x", x); j.put("y", y); j.put("width", width); j.put("height", height); j.put("shape", shape); j.put("capacity", capacity); j.put("status", status); j.put("reservationId", reservationId); j.put("notes", note); j.put("isOutOfService", isOutOfService); JSONArray a = new JSONArray(); for (String s: linkedTableIds) a.put(s); j.put("linkedTableIds", a); } catch(Exception ignored) {} return j; }
+        static Table from(JSONObject j) { String number = j.optString("number", j.optString("nr", j.optString("name", "?"))); Table t = new Table(j.optString("id", "table-" + number), number, j.optString("zone", "Binnen"), j.optInt("x", 50), j.optInt("y", 50), Math.max(70, j.optInt("width", j.optInt("breed", 88))), Math.max(70, j.optInt("height", j.optInt("hoog", 78))), j.optString("shape", j.optString("vorm", "vierkante tafel")), j.optInt("capacity", j.optInt("cap", 4))); t.status = migrateStatus(j.optString("status", "vrij")); t.reservationId = j.optString("reservationId", j.optString("resId", "")); t.note = j.optString("notes", j.optString("notitie", "")); t.isOutOfService = j.optBoolean("isOutOfService", "buiten gebruik".equals(t.status)); JSONArray a = j.optJSONArray("linkedTableIds"); if (a == null) a = j.optJSONArray("tafels"); if (a != null) for (int i=0;i<a.length();i++) t.linkedTableIds.add(a.optString(i)); return t; }
+        static String migrateStatus(String s) { if ("VRIJ".equals(s) || "FREE".equals(s)) return "vrij"; if ("BEZET".equals(s) || "OCCUPIED".equals(s)) return "bezet"; if ("BIJNA".equals(s) || "SOON".equals(s)) return "bijna vrij"; if ("REKENING".equals(s) || "BILL".equals(s)) return "rekening"; if ("GEBLOKKEERD".equals(s) || "BLOCKED".equals(s)) return "buiten gebruik"; if ("VERWACHT".equals(s)) return "gereserveerd"; return s == null || s.isEmpty() ? "vrij" : s.toLowerCase(Locale.ROOT); }
+    }
+
+    static class Reservation {
+        String id = UUID.randomUUID().toString(), name = "", phone = "", date = LocalDate.now().toString(), time = "", preferredZone = "Geen voorkeur", status = "verwacht", notes = "", source = "handmatig", createdAt = ""; int partySize = 2, durationMinutes = 120; ArrayList<String> assignedTableIds = new ArrayList<>();
+        Reservation copy() { Reservation r = new Reservation(); r.id=id; r.name=name; r.phone=phone; r.date=date; r.time=time; r.preferredZone=preferredZone; r.status=status; r.notes=notes; r.source=source; r.createdAt=createdAt; r.partySize=partySize; r.durationMinutes=durationMinutes; r.assignedTableIds.addAll(assignedTableIds); return r; }
+        JSONObject json() { JSONObject j = new JSONObject(); try { j.put("id", id); j.put("name", name); j.put("phone", phone); j.put("date", date); j.put("time", time); j.put("partySize", partySize); j.put("durationMinutes", durationMinutes); j.put("preferredZone", preferredZone); JSONArray a = new JSONArray(); for (String s: assignedTableIds) a.put(s); j.put("assignedTableIds", a); j.put("status", status); j.put("notes", notes); j.put("source", source); j.put("createdAt", createdAt); } catch(Exception ignored) {} return j; }
+        static Reservation from(JSONObject j) { Reservation r = new Reservation(); r.id = j.optString("id", UUID.randomUUID().toString()); r.name = j.optString("name", j.optString("naam", "")); r.phone = j.optString("phone", ""); r.date = j.optString("date", LocalDate.now().toString()); r.time = j.optString("time", j.optString("tijd", "")); r.partySize = j.optInt("partySize", j.optInt("personen", j.optInt("people", 2))); r.durationMinutes = j.optInt("durationMinutes", 120); r.preferredZone = j.optString("preferredZone", j.optString("voorkeur", "Geen voorkeur")); r.status = migrateStatus(j.optString("status", "verwacht")); r.notes = j.optString("notes", j.optString("notitie", j.optString("note", ""))); r.source = j.optString("source", "handmatig"); r.createdAt = j.optString("createdAt", ""); JSONArray a = j.optJSONArray("assignedTableIds"); if (a == null) a = j.optJSONArray("tafels"); if (a != null) for (int i=0;i<a.length();i++) r.assignedTableIds.add(a.optString(i)); return r; }
+        static String migrateStatus(String s) { if ("Verwacht".equals(s)) return "verwacht"; if ("Geplaatst".equals(s)) return "zit"; if ("Geannuleerd".equals(s)) return "geannuleerd"; if ("No-show".equals(s)) return "no-show"; return s == null || s.isEmpty() ? "verwacht" : s.toLowerCase(Locale.ROOT); }
+    }
+
+    static class Risk { String id = UUID.randomUUID().toString(), type, severity, message, relatedReservationId = ""; ArrayList<String> relatedTableIds = new ArrayList<>(); Risk(String type, String severity, String message) { this.type=type; this.severity=severity; this.message=message; } String severityLabel() { return "hoog".equals(severity) ? "Hoog risico" : "middel".equals(severity) ? "Middel risico" : "Laag risico"; } int color() { return "hoog".equals(severity) ? RISK_RED : "middel".equals(severity) ? ORANGE : GREEN; } }
+    static class Candidate { ArrayList<String> tableIds; int capacity; String label, zone; Candidate(ArrayList<String> tableIds, int capacity, String label, String zone) { this.tableIds=tableIds; this.capacity=capacity; this.label=label; this.zone=zone; } }
+    static class Assignment { Candidate best; String bestText = "geen voorstel", riskText = ""; ArrayList<String> alternatives = new ArrayList<>(); }
+    interface IntSave { void save(int v); } interface TextSave { void save(String s); } interface TableAction { void run(Table t); }
 }

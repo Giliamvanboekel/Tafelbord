@@ -9,6 +9,7 @@ on:
 
 jobs:
   build-debug-apk:
+    name: Build Live Tafelbord APK
     runs-on: ubuntu-latest
 
     steps:

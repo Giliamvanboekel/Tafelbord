@@ -8,7 +8,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
-            android:name=".EmailMainActivity"
+            android:name=".TaskMainActivity"
             android:exported="true"
             android:screenOrientation="portrait">
             <intent-filter>

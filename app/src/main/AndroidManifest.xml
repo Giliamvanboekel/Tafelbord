@@ -10,7 +10,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
-            android:name=".WeatherMainActivity"
+            android:name=".CashMainActivity"
             android:exported="true"
             android:screenOrientation="portrait">
             <intent-filter>
